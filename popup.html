@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Strang Explainer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="strang-root strang-light">
+    <div id="app" class="strang-container">
+      <header class="strang-header">
+        <div class="strang-title-block">
+          <h1 class="strang-title">Strang Explainer</h1>
+          <p class="strang-subtitle">Turn selected text into a short explainer video.</p>
+        </div>
+        <label class="strang-toggle">
+          <span>Dark mode</span>
+          <input type="checkbox" id="darkModeToggle" />
+          <span class="strang-toggle-slider"></span>
+        </label>
+      </header>
+
+      <section class="strang-section">
+        <label for="inputText" class="strang-label">Selected text</label>
+        <textarea
+          id="inputText"
+          class="strang-textarea"
+          rows="5"
+          placeholder="Select text on a page, or paste it here..."
+        ></textarea>
+        <div class="strang-text-meta">
+          <span id="charCount" class="strang-char-count">0 / 3000</span>
+          <button id="refreshSelectionBtn" class="strang-link-button" type="button">
+            Use current page selection
+          </button>
+        </div>
+      </section>
+
+      <section class="strang-section strang-grid">
+        <div class="strang-field">
+          <label for="styleSelect" class="strang-label">Explanation style</label>
+          <select id="styleSelect" class="strang-select">
+            <option value="simple">Simple</option>
+            <option value="academic">Academic</option>
+            <option value="child-friendly">Child-friendly</option>
+            <option value="technical">Technical</option>
+          </select>
+        </div>
+
+        <div class="strang-field">
+          <label for="durationSelect" class="strang-label">Video length</label>
+          <select id="durationSelect" class="strang-select">
+            <option value="30">30 seconds</option>
+            <option value="60" selected>60 seconds</option>
+            <option value="120">120 seconds</option>
+          </select>
+        </div>
+
+        <div class="strang-field">
+          <label for="accentSelect" class="strang-label">Voice accent (placeholder)</label>
+          <select id="accentSelect" class="strang-select">
+            <option value="neutral">Neutral</option>
+            <option value="us">US</option>
+            <option value="uk">UK</option>
+            <option value="au">AU</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="strang-section strang-actions">
+        <button id="generateBtn" class="strang-button-primary" type="button">
+          Generate explainer video
+        </button>
+        <div id="statusRow" class="strang-status-row">
+          <div id="loader" class="strang-loader hidden"></div>
+          <span id="statusText" class="strang-status-text">Waiting for input...</span>
+        </div>
+      </section>
+
+      <section class="strang-section">
+        <h2 class="strang-section-title">Preview & export</h2>
+        <video id="previewVideo" class="strang-video" controls></video>
+        <div class="strang-preview-controls">
+          <label class="strang-label" for="speedSelect">Playback speed</label>
+          <select id="speedSelect" class="strang-select strang-speed-select">
+            <option value="0.75">0.75x</option>
+            <option value="1" selected>1x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2x</option>
+          </select>
+        </div>
+        <div class="strang-export-row">
+          <button id="downloadVideoBtn" class="strang-button-secondary" type="button" disabled>
+            Download video (.webm)
+          </button>
+          <button id="downloadSrtBtn" class="strang-button-secondary" type="button" disabled>
+            Download subtitles (.srt)
+          </button>
+        </div>
+      </section>
+
+      <section class="strang-section">
+        <p id="errorText" class="strang-error-text hidden"></p>
+      </section>
+    </div>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
+
