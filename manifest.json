@@ -18,7 +18,9 @@
     "scripting"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "http://localhost:8000/*",
+    "ws://localhost:8000/*"
   ],
   "content_scripts": [
     {

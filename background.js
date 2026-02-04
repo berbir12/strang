@@ -1,41 +1,43 @@
 // background.js (Service Worker)
-// - Creates context menu
-// - Mediates messaging between content scripts and popup
-// - Calls backend API for video generation (or falls back to local mock)
-// - Manages basic caching and progress updates
-
-import { generateVideoPlan } from './aiMock.js';
+// - Creates context menu for text selection
+// - Handles API calls to Grok + HeyGen backend
+// - Manages WebSocket connections for real-time progress
+// - Broadcasts progress updates to popup
 
 const STORAGE_KEYS = {
   LAST_SELECTION: 'lastSelection',
-  LAST_PLAN: 'lastPlan',
-  UI_STATE: 'uiState',
-  LAST_JOB: 'lastJob'
+  LAST_JOB: 'lastJob',
+  UI_STATE: 'uiState'
 };
 
 const MAX_TEXT_LENGTH = 3000;
 
-// Backend API URL - configure this based on your deployment
+// Backend API URL - configure for your deployment
 const BACKEND_URL = 'http://localhost:8000';
-const USE_BACKEND = true;  // Set to false to use local mock pipeline
+const BACKEND_WS_URL = 'ws://localhost:8000';
+const USE_WEBSOCKET = true;
+
+// WebSocket management
+let activeWebSockets = new Map();
 
 // Create context menu for selected text
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: 'strang-generate-explainer',
-    title: 'Generate Explainer Video with Strang',
-    contexts: ['selection']
+  // Remove all existing context menus to avoid duplicate ID errors
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: 'strang-generate-video',
+      title: 'Generate Avatar Video with Strang',
+      contexts: ['selection']
+    });
   });
 });
 
 // Handle context menu click
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== 'strang-generate-explainer') return;
+  if (info.menuItemId !== 'strang-generate-video') return;
 
   const text = (info.selectionText || '').trim();
-  if (!text) {
-    return;
-  }
+  if (!text) return;
 
   const safeText = sanitizeText(text);
   const selectionPayload = {
@@ -45,15 +47,16 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     timestamp: Date.now()
   };
 
-  chrome.storage.local.set({ [STORAGE_KEYS.LAST_SELECTION]: selectionPayload });
+  chrome.storage.local.set({ 
+    [STORAGE_KEYS.LAST_SELECTION]: selectionPayload,
+    selectedText: safeText
+  });
 
-  // Notify any open popup that a new selection is available
+  // Notify popup if open
   chrome.runtime.sendMessage({
     type: 'SELECTION_UPDATED',
     payload: selectionPayload
-  }).catch(() => {
-    // Popup might not be open; ignore errors
-  });
+  }).catch(() => {});
 });
 
 // Main message router
@@ -77,7 +80,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await handleGetJobResult(message.payload, sendResponse);
           break;
         default:
-          // Unknown message type; ignore
           break;
       }
     } catch (err) {
@@ -85,13 +87,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({
         success: false,
         errorCode: 'UNEXPECTED_ERROR',
-        message: 'An unexpected error occurred in the background script.'
+        message: 'An unexpected error occurred.'
       });
     }
   })();
 
-  // Indicate async response
-  return true;
+  return true; // Async response
 });
 
 async function handleGetLastSelection(sendResponse) {
@@ -101,13 +102,22 @@ async function handleGetLastSelection(sendResponse) {
 }
 
 async function handleRequestActiveSelection(sendResponse) {
-  // Ask the active tab's content script for the latest selection
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
     sendResponse({
       success: false,
       errorCode: 'NO_ACTIVE_TAB',
       message: 'No active tab found.'
+    });
+    return;
+  }
+
+  const tabUrl = tab.url || '';
+  if (!tabUrl || /^(chrome|edge|devtools|chrome-extension|about):/i.test(tabUrl)) {
+    sendResponse({
+      success: false,
+      errorCode: 'UNSUPPORTED_PAGE',
+      message: 'Cannot access selections on this type of page.'
     });
     return;
   }
@@ -119,7 +129,7 @@ async function handleRequestActiveSelection(sendResponse) {
       sendResponse({
         success: false,
         errorCode: 'EMPTY_SELECTION',
-        message: 'No text is currently selected on the page.'
+        message: 'No text is currently selected.'
       });
       return;
     }
@@ -130,28 +140,74 @@ async function handleRequestActiveSelection(sendResponse) {
       url: tab.url || '',
       timestamp: Date.now()
     };
-    await chrome.storage.local.set({ [STORAGE_KEYS.LAST_SELECTION]: selectionPayload });
+    
+    await chrome.storage.local.set({ 
+      [STORAGE_KEYS.LAST_SELECTION]: selectionPayload,
+      selectedText: text
+    });
 
     sendResponse({ success: true, lastSelection: selectionPayload });
   } catch (err) {
-    console.error('Error requesting selection from content script', err);
+    const message = err?.message || String(err);
+    const isMissingReceiver = message.includes('Receiving end does not exist')
+      || message.includes('Could not establish connection');
+
+    if (isMissingReceiver) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content.js']
+        });
+
+        const retry = await chrome.tabs.sendMessage(tab.id, { type: 'GET_SELECTION' });
+        const text = sanitizeText((retry && retry.text) || '');
+
+        if (!text) {
+          sendResponse({
+            success: false,
+            errorCode: 'EMPTY_SELECTION',
+            message: 'No text is currently selected.'
+          });
+          return;
+        }
+
+        const selectionPayload = {
+          text,
+          source: 'content-script',
+          url: tab.url || '',
+          timestamp: Date.now()
+        };
+
+        await chrome.storage.local.set({ 
+          [STORAGE_KEYS.LAST_SELECTION]: selectionPayload,
+          selectedText: text
+        });
+
+        sendResponse({ success: true, lastSelection: selectionPayload });
+        return;
+      } catch (retryErr) {
+        console.error('Error requesting selection from content script', retryErr);
+      }
+    } else {
+      console.error('Error requesting selection from content script', err);
+    }
     sendResponse({
       success: false,
       errorCode: 'CONTENT_SCRIPT_COMM_ERROR',
-      message: 'Could not communicate with the content script on the active tab.'
+      message: 'Could not communicate with content script. Try reloading the page.'
     });
   }
 }
 
 async function handleGenerateVideoRequest(payload, sendResponse) {
-  const { text, style, duration, voiceAccent, includeMochi } = payload || {};
+  const { text, style } = payload || {};
   const cleanedText = sanitizeText(text || '');
 
   if (!cleanedText) {
     sendResponse({
       success: false,
       errorCode: 'EMPTY_TEXT',
-      message: 'Please provide some text to generate an explainer video.'
+      message: 'Please provide some text to generate a video.'
     });
     return;
   }
@@ -160,39 +216,12 @@ async function handleGenerateVideoRequest(payload, sendResponse) {
     sendResponse({
       success: false,
       errorCode: 'TEXT_TOO_LONG',
-      message: `Selected text is too long. Maximum allowed length is ${MAX_TEXT_LENGTH} characters.`
+      message: `Text too long. Maximum ${MAX_TEXT_LENGTH} characters.`
     });
     return;
   }
 
-  // Basic validation of style/duration
-  const safeStyle = style || 'simple';
-  const safeDuration = [30, 60, 120].includes(duration) ? duration : 60;
-  const safeVoiceAccent = voiceAccent || 'neutral';
-  const useMochi = includeMochi !== false;  // Default true
-
-  if (USE_BACKEND) {
-    // Use backend API (hybrid Manim + Mochi pipeline)
-    await handleBackendGeneration({
-      text: cleanedText,
-      style: safeStyle,
-      duration: safeDuration,
-      voiceAccent: safeVoiceAccent,
-      includeMochi: useMochi
-    }, sendResponse);
-  } else {
-    // Fallback to local mock pipeline
-    await handleLocalGeneration({
-      text: cleanedText,
-      style: safeStyle,
-      duration: safeDuration,
-      voiceAccent: safeVoiceAccent
-    }, sendResponse);
-  }
-}
-
-async function handleBackendGeneration(params, sendResponse) {
-  const { text, style, duration, voiceAccent, includeMochi } = params;
+  const safeStyle = style || 'professional';
 
   broadcastProgress({
     step: 'backend',
@@ -201,18 +230,13 @@ async function handleBackendGeneration(params, sendResponse) {
   });
 
   try {
-    // Call backend API
-    const response = await fetch(`${BACKEND_URL}/generate-video`, {
+    // Call new /api/process-video endpoint
+    const response = await fetch(`${BACKEND_URL}/api/process-video`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text,
-        style,
-        duration,
-        voice_accent: voiceAccent,
-        include_mochi: includeMochi
+        text: cleanedText,
+        style: safeStyle
       })
     });
 
@@ -235,14 +259,18 @@ async function handleBackendGeneration(params, sendResponse) {
     broadcastProgress({
       step: 'backend',
       status: 'submitted',
-      message: 'Video generation started. Job ID: ' + jobId
+      message: 'Job submitted. Groq is scripting...'
     });
+    
+    // Connect WebSocket for real-time updates
+    const ws = connectWebSocket(jobId);
 
     sendResponse({
       success: true,
       jobId,
       estimated_time: data.estimated_time_seconds,
-      message: 'Job submitted. Poll for progress using jobId.'
+      message: 'Job submitted successfully.',
+      websocket_available: !!ws
     });
 
   } catch (err) {
@@ -261,44 +289,87 @@ async function handleBackendGeneration(params, sendResponse) {
   }
 }
 
-async function handleLocalGeneration(params, sendResponse) {
-  // Fallback to local mock
-  broadcastProgress({
-    step: 'pipeline',
-    status: 'starting',
-    message: 'Starting local AI pipeline...'
-  });
-
+function connectWebSocket(jobId) {
+  if (!USE_WEBSOCKET) {
+    console.log('[WebSocket] Disabled');
+    return null;
+  }
+  
+  // Clean up existing connection
+  if (activeWebSockets.has(jobId)) {
+    activeWebSockets.get(jobId).close();
+    activeWebSockets.delete(jobId);
+  }
+  
   try {
-    const plan = await generateVideoPlan(params);
-
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.LAST_PLAN]: plan
-    });
-
-    broadcastProgress({
-      step: 'pipeline',
-      status: 'done',
-      message: 'AI plan generated.'
-    });
-
-    sendResponse({
-      success: true,
-      plan
-    });
+    const ws = new WebSocket(`${BACKEND_WS_URL}/ws/job/${jobId}`);
+    
+    ws.onopen = () => {
+      console.log(`[WebSocket] Connected to job ${jobId}`);
+    };
+    
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log(`[WebSocket] Message:`, data);
+        
+        if (data.type === 'progress' || data.type === 'connected') {
+          broadcastProgress({
+            step: data.current_step,
+            status: data.status,
+            message: data.message,
+            progress_percent: data.progress_percent
+          });
+        } else if (data.type === 'complete') {
+          broadcastProgress({
+            step: 'completed',
+            status: 'completed',
+            message: 'Video generation complete!',
+            progress_percent: 100
+          });
+          ws.close();
+          activeWebSockets.delete(jobId);
+        } else if (data.type === 'error') {
+          broadcastProgress({
+            step: 'failed',
+            status: 'error',
+            message: data.error || 'Video generation failed',
+            progress_percent: 0
+          });
+          ws.close();
+          activeWebSockets.delete(jobId);
+        }
+      } catch (err) {
+        console.error('[WebSocket] Parse error:', err);
+      }
+    };
+    
+    ws.onerror = (error) => {
+      console.error('[WebSocket] Error:', error);
+      activeWebSockets.delete(jobId);
+    };
+    
+    ws.onclose = (event) => {
+      console.log(`[WebSocket] Closed: ${event.code}`);
+      activeWebSockets.delete(jobId);
+    };
+    
+    activeWebSockets.set(jobId, ws);
+    
+    // Ping to keep alive
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send('ping');
+      } else {
+        clearInterval(pingInterval);
+      }
+    }, 20000);
+    
+    return ws;
+    
   } catch (err) {
-    console.error('Error generating video plan', err);
-    broadcastProgress({
-      step: 'pipeline',
-      status: 'error',
-      message: 'Failed to generate AI plan.'
-    });
-
-    sendResponse({
-      success: false,
-      errorCode: 'PIPELINE_ERROR',
-      message: 'Failed to generate content for the explainer video.'
-    });
+    console.error('[WebSocket] Failed:', err);
+    return null;
   }
 }
 
@@ -308,7 +379,7 @@ async function handlePollJobProgress(payload, sendResponse) {
     sendResponse({
       success: false,
       errorCode: 'MISSING_JOB_ID',
-      message: 'Job ID is required'
+      message: 'Job ID required'
     });
     return;
   }
@@ -322,7 +393,6 @@ async function handlePollJobProgress(payload, sendResponse) {
 
     const progress = await response.json();
 
-    // Broadcast progress update to popup
     broadcastProgress({
       step: progress.current_step,
       status: progress.status,
@@ -330,16 +400,13 @@ async function handlePollJobProgress(payload, sendResponse) {
       progress_percent: progress.progress_percent
     });
 
-    sendResponse({
-      success: true,
-      progress
-    });
+    sendResponse({ success: true, progress });
   } catch (err) {
     console.error('Poll job progress error', err);
     sendResponse({
       success: false,
       errorCode: 'POLL_ERROR',
-      message: `Failed to poll job progress: ${err.message}`
+      message: `Failed to poll: ${err.message}`
     });
   }
 }
@@ -350,7 +417,7 @@ async function handleGetJobResult(payload, sendResponse) {
     sendResponse({
       success: false,
       errorCode: 'MISSING_JOB_ID',
-      message: 'Job ID is required'
+      message: 'Job ID required'
     });
     return;
   }
@@ -359,11 +426,10 @@ async function handleGetJobResult(payload, sendResponse) {
     const response = await fetch(`${BACKEND_URL}/job/${jobId}/result`);
     
     if (response.status === 202) {
-      // Still processing
       sendResponse({
         success: false,
         errorCode: 'JOB_PROCESSING',
-        message: 'Job is still processing'
+        message: 'Job still processing'
       });
       return;
     }
@@ -374,45 +440,28 @@ async function handleGetJobResult(payload, sendResponse) {
 
     const result = await response.json();
 
-    // Convert relative URLs to absolute
-    if (result.video_url && !result.video_url.startsWith('http')) {
-      result.video_url = `${BACKEND_URL}${result.video_url}`;
-    }
-    if (result.thumbnail_url && !result.thumbnail_url.startsWith('http')) {
-      result.thumbnail_url = `${BACKEND_URL}${result.thumbnail_url}`;
-    }
-
-    sendResponse({
-      success: true,
-      result
-    });
+    sendResponse({ success: true, result });
   } catch (err) {
     console.error('Get job result error', err);
     sendResponse({
       success: false,
       errorCode: 'RESULT_ERROR',
-      message: `Failed to get job result: ${err.message}`
+      message: `Failed to get result: ${err.message}`
     });
   }
 }
 
 function sanitizeText(text) {
   if (!text) return '';
-  const stripped = text
-    // Remove HTML tags if any
+  return text
     .replace(/<[^>]*>/g, ' ')
-    // Normalize whitespace
     .replace(/\s+/g, ' ')
     .trim();
-  return stripped;
 }
 
-function broadcastProgress({ step, status, message }) {
+function broadcastProgress({ step, status, message, progress_percent }) {
   chrome.runtime.sendMessage({
     type: 'VIDEO_PROGRESS',
-    payload: { step, status, message }
-  }).catch(() => {
-    // Popup may not be open; safe to ignore
-  });
+    payload: { step, status, message, progress_percent }
+  }).catch(() => {});
 }
-

@@ -2,73 +2,55 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Strang Explainer</title>
+    <title>Strang Avatar Video</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body class="strang-root strang-light">
     <div id="app" class="strang-container">
       <header class="strang-header">
         <div class="strang-title-block">
-          <h1 class="strang-title">Strang Explainer</h1>
-          <p class="strang-subtitle">Turn selected text into a short explainer video.</p>
+          <h1 class="strang-title">Strang</h1>
+          <p class="strang-subtitle">Turn text into AI avatar videos with Groq + HeyGen</p>
         </div>
         <label class="strang-toggle">
-          <span>Dark mode</span>
+          <span>Dark</span>
           <input type="checkbox" id="darkModeToggle" />
           <span class="strang-toggle-slider"></span>
         </label>
       </header>
 
       <section class="strang-section">
-        <label for="inputText" class="strang-label">Selected text</label>
+        <label for="inputText" class="strang-label">Your content</label>
         <textarea
           id="inputText"
           class="strang-textarea"
-          rows="5"
-          placeholder="Select text on a page, or paste it here..."
+          rows="6"
+          placeholder="Select text on a page, or paste your content here..."
         ></textarea>
         <div class="strang-text-meta">
           <span id="charCount" class="strang-char-count">0 / 3000</span>
           <button id="refreshSelectionBtn" class="strang-link-button" type="button">
-            Use current page selection
+            ↻ Get page selection
           </button>
         </div>
       </section>
 
-      <section class="strang-section strang-grid">
+      <section class="strang-section">
         <div class="strang-field">
-          <label for="styleSelect" class="strang-label">Explanation style</label>
+          <label for="styleSelect" class="strang-label">Script style</label>
           <select id="styleSelect" class="strang-select">
-            <option value="simple">Simple</option>
-            <option value="academic">Academic</option>
-            <option value="child-friendly">Child-friendly</option>
-            <option value="technical">Technical</option>
-          </select>
-        </div>
-
-        <div class="strang-field">
-          <label for="durationSelect" class="strang-label">Video length</label>
-          <select id="durationSelect" class="strang-select">
-            <option value="30">30 seconds</option>
-            <option value="60" selected>60 seconds</option>
-            <option value="120">120 seconds</option>
-          </select>
-        </div>
-
-        <div class="strang-field">
-          <label for="accentSelect" class="strang-label">Voice accent (placeholder)</label>
-          <select id="accentSelect" class="strang-select">
-            <option value="neutral">Neutral</option>
-            <option value="us">US</option>
-            <option value="uk">UK</option>
-            <option value="au">AU</option>
+            <option value="professional" selected>Professional</option>
+            <option value="casual">Casual</option>
+            <option value="educational">Educational</option>
+            <option value="friendly">Friendly</option>
           </select>
         </div>
       </section>
+      
 
       <section class="strang-section strang-actions">
         <button id="generateBtn" class="strang-button-primary" type="button">
-          Generate explainer video
+          🎬 Generate Avatar Video
         </button>
         <div id="statusRow" class="strang-status-row">
           <div id="loader" class="strang-loader hidden"></div>
@@ -77,24 +59,11 @@
       </section>
 
       <section class="strang-section">
-        <h2 class="strang-section-title">Preview & export</h2>
+        <h2 class="strang-section-title">Preview & Download</h2>
         <video id="previewVideo" class="strang-video" controls></video>
-        <div class="strang-preview-controls">
-          <label class="strang-label" for="speedSelect">Playback speed</label>
-          <select id="speedSelect" class="strang-select strang-speed-select">
-            <option value="0.75">0.75x</option>
-            <option value="1" selected>1x</option>
-            <option value="1.25">1.25x</option>
-            <option value="1.5">1.5x</option>
-            <option value="2">2x</option>
-          </select>
-        </div>
         <div class="strang-export-row">
           <button id="downloadVideoBtn" class="strang-button-secondary" type="button" disabled>
-            Download video (.webm)
-          </button>
-          <button id="downloadSrtBtn" class="strang-button-secondary" type="button" disabled>
-            Download subtitles (.srt)
+            ⬇ Download Video (.mp4)
           </button>
         </div>
       </section>
@@ -102,9 +71,12 @@
       <section class="strang-section">
         <p id="errorText" class="strang-error-text hidden"></p>
       </section>
+
+      <footer class="strang-footer">
+        <p>Powered by <strong>Groq</strong> + <strong>HeyGen</strong></p>
+      </footer>
     </div>
 
-    <script type="module" src="popup.js"></script>
+    <script src="popup.js"></script>
   </body>
 </html>
-

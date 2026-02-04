@@ -1,33 +1,37 @@
 """
-Strang Backend API - Hybrid Manim + Mochi video generation
+Strang Backend API - Groq (FREE) + HeyGen Avatar Video Generation
+Clean, efficient pipeline rebuilt from scratch
 """
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 import uvicorn
+import asyncio
+from typing import Optional
 
 from config import settings
 from models import (
-    GenerateVideoRequest,
-    GenerateVideoResponse,
+    ProcessVideoRequest,
+    ProcessVideoResponse,
     JobProgress,
     VideoResult,
-    JobStatus
+    JobStatus,
+    ScriptOnlyRequest,
+    ScriptOnlyResponse,
+    AvatarInfo,
+    VoiceInfo,
+    AvailableAvatarsResponse,
+    AvailableVoicesResponse
 )
 from utils.job_manager import job_manager
-from services.gemma_service import GemmaService
-from services.manim_generator import ManimGenerator, SimpleManimFallback
-from services.mochi_service import MochiService
-from services.tts_service import TTSService
-from services.compositor import VideoCompositor
+from services.groq_service import GroqService
+from services.heygen_service import HeyGenService, HeyGenVideoStatus
 
 # Initialize FastAPI app
 app = FastAPI(
     title="Strang Video Generation API",
-    description="Hybrid Manim + Mochi explainer video generator",
-    version="1.0.0"
+    description="Groq (Free AI) + HeyGen Avatar Video Generator",
+    version="3.0.0"
 )
 
 # CORS middleware for Chrome extension
@@ -42,138 +46,115 @@ app.add_middleware(
 # Serve generated videos as static files
 app.mount("/outputs", StaticFiles(directory=str(settings.OUTPUT_DIR)), name="outputs")
 
-# Initialize services
-claude_service = GemmaService()
-manim_generator = ManimGenerator()
-mochi_service = MochiService()
-tts_service = TTSService()
-compositor = VideoCompositor()
+# Initialize services (lazy loading)
+_groq_service: Optional[GroqService] = None
+_heygen_service: Optional[HeyGenService] = None
 
 
-def process_video_generation(
+def get_groq_service() -> GroqService:
+    """Get or initialize Groq service"""
+    global _groq_service
+    if _groq_service is None:
+        _groq_service = GroqService()
+    return _groq_service
+
+
+def get_heygen_service() -> HeyGenService:
+    """Get or initialize HeyGen service"""
+    global _heygen_service
+    if _heygen_service is None:
+        _heygen_service = HeyGenService()
+    return _heygen_service
+
+
+async def process_video_generation(
     job_id: str,
-    request: GenerateVideoRequest
+    request: ProcessVideoRequest
 ) -> dict:
     """
-    Main video generation pipeline
-    
-    This function runs in the background and updates job progress
+    Main video generation pipeline:
+    1. Groq generates enhanced script (FREE and FAST)
+    2. HeyGen renders avatar video
     """
     
     try:
-        # Step 1: Generate storyboard with Claude (10%)
+        # ============================================
+        # Stage 1: Generate script with Groq (0-30%)
+        # ============================================
         job_manager.update_progress(
             job_id,
-            JobStatus.GENERATING_STORYBOARD,
+            JobStatus.SCRIPTING,
             10,
-            "generating_storyboard",
-            "Generating intelligent storyboard with Claude..."
+            "scripting",
+            "Groq AI is writing your script..."
         )
         
-        storyboard = claude_service.generate_storyboard(
+        groq = get_groq_service()
+        script = await asyncio.to_thread(
+            groq.generate_script,
             text=request.text,
-            style=request.style,
-            duration=request.duration,
-            voice_accent=request.voice_accent.value
+            style=request.style.value
         )
         
-        print(f"✓ Storyboard generated: {len(storyboard.scenes)} scenes")
+        print(f"✓ Script generated: {len(script)} characters", flush=True)
         
-        # Step 2: Render scenes (10-60%)
-        video_clips = []
-        total_scenes = len(storyboard.scenes)
-        
-        for i, scene in enumerate(storyboard.scenes):
-            progress = 10 + int(50 * (i / total_scenes))
-            
-            if scene.type.value == "slide":
-                # Render with Manim
-                job_manager.update_progress(
-                    job_id,
-                    JobStatus.RENDERING_SLIDES,
-                    progress,
-                    "rendering_slides",
-                    f"Rendering slide {i+1}/{total_scenes}: {scene.title}"
-                )
-                
-                try:
-                    clip_path = manim_generator.render_scene(scene, i)
-                except Exception as e:
-                    print(f"Manim failed, using fallback: {e}")
-                    fallback = SimpleManimFallback()
-                    clip_path = fallback.render_scene(scene, i)
-                
-            else:  # visual scene
-                # Render with Mochi
-                job_manager.update_progress(
-                    job_id,
-                    JobStatus.RENDERING_VISUALS,
-                    progress,
-                    "rendering_visuals",
-                    f"Generating B-roll {i+1}/{total_scenes}: {scene.title}"
-                )
-                
-                if request.include_mochi:
-                    clip_path = mochi_service.render_scene(scene, i)
-                else:
-                    # Use placeholder if Mochi disabled
-                    clip_path = mochi_service._generate_placeholder(scene, i)
-            
-            video_clips.append(clip_path)
-            print(f"✓ Scene {i+1} rendered: {clip_path}")
-        
-        # Step 3: Generate voiceover (60-70%)
         job_manager.update_progress(
             job_id,
-            JobStatus.GENERATING_VOICEOVER,
-            65,
-            "generating_voiceover",
-            "Generating voiceover with TTS..."
+            JobStatus.SCRIPTING,
+            30,
+            "scripting",
+            "Script generation complete!"
         )
         
-        audio_path = tts_service.generate_voiceover(
-            script=storyboard.voiceover_script,
-            voice=request.voice_accent.value,
-            job_id=job_id
-        )
-        
-        if audio_path:
-            # Adjust audio duration to match video
-            audio_path = tts_service.adjust_audio_duration(audio_path, request.duration)
-            print(f"✓ Voiceover generated: {audio_path}")
-        
-        # Step 4: Composite final video (70-95%)
+        # ============================================
+        # Stage 2: Generate video with HeyGen (30-95%)
+        # ============================================
+        print(f"[{job_id[:8]}] Initializing HeyGen service...", flush=True)
         job_manager.update_progress(
             job_id,
-            JobStatus.COMPOSITING,
-            75,
-            "compositing",
-            "Stitching scenes, adding audio and subtitles..."
+            JobStatus.RENDERING,
+            35,
+            "rendering",
+            "HeyGen is rendering your avatar video..."
         )
         
-        final_video, srt_content = compositor.compose_final_video(
-            video_clips=video_clips,
-            storyboard=storyboard,
-            audio_path=audio_path,
-            job_id=job_id
+        heygen = get_heygen_service()
+        print(f"[{job_id[:8]}] Submitting video to HeyGen...", flush=True)
+        
+        # Submit video generation request
+        video_id = await heygen.generate_avatar_video(
+            script=script,
+            avatar_id=request.avatar_id,
+            voice_id=request.voice_id,
+            video_title=f"Strang_{job_id}"
         )
         
-        # Step 5: Generate thumbnail (95-100%)
-        job_manager.update_progress(
-            job_id,
-            JobStatus.COMPOSITING,
-            95,
-            "finalizing",
-            "Generating thumbnail..."
+        # Progress callback for HeyGen polling
+        async def heygen_progress_callback(percent, message, result):
+            # Map HeyGen progress (0-100) to our range (35-95)
+            mapped_percent = 35 + int(percent * 0.6)
+            job_manager.update_progress(
+                job_id,
+                JobStatus.RENDERING,
+                mapped_percent,
+                "rendering",
+                message
+            )
+        
+        # Wait for video completion
+        result = await heygen.wait_for_completion(
+            video_id=video_id,
+            progress_callback=heygen_progress_callback
         )
         
-        thumbnail_path = compositor.create_thumbnail(final_video, job_id)
+        if result.status != HeyGenVideoStatus.COMPLETED:
+            raise RuntimeError(result.error or "HeyGen video generation failed")
         
-        # Build URLs
-        video_url = f"/outputs/{final_video.name}"
-        thumbnail_url = f"/outputs/{thumbnail_path.name}"
+        print(f"✓ Video rendered: {result.video_url}")
         
-        # Complete!
+        # ============================================
+        # Stage 3: Complete (95-100%)
+        # ============================================
         job_manager.update_progress(
             job_id,
             JobStatus.COMPLETED,
@@ -183,19 +164,10 @@ def process_video_generation(
         )
         
         return {
-            "video_url": video_url,
-            "srt_content": srt_content,
-            "thumbnail_url": thumbnail_url,
-            "duration": float(request.duration),
-            "metadata": {
-                "style": request.style.value,
-                "voice_accent": request.voice_accent.value,
-                "num_scenes": len(storyboard.scenes),
-                "scenes": [
-                    {"type": s.type.value, "title": s.title, "duration": s.duration}
-                    for s in storyboard.scenes
-                ]
-            }
+            "video_url": result.video_url,
+            "thumbnail_url": result.thumbnail_url,
+            "duration": result.duration,
+            "script": script
         }
         
     except Exception as e:
@@ -209,22 +181,30 @@ async def root():
     return {
         "service": "Strang Video Generation API",
         "status": "running",
-        "version": "1.0.0",
-        "mochi_enabled": settings.MOCHI_ENABLED
+        "version": "3.0.0",
+        "pipeline": "Groq (FREE) + HeyGen",
+        "ai_provider": "Groq API (Free)",
+        "video_provider": "HeyGen"
     }
 
 
-@app.post("/generate-video", response_model=GenerateVideoResponse)
-async def generate_video(request: GenerateVideoRequest, background_tasks: BackgroundTasks):
+@app.post("/api/process-video", response_model=ProcessVideoResponse)
+async def process_video(request: ProcessVideoRequest):
     """
     Start video generation job
+    
+    Pipeline:
+    1. Groq AI (free) enhances the text into a professional script
+    2. HeyGen generates an AI avatar video
     
     Returns job ID immediately, actual processing happens in background
     """
     
-    # Validate
-    if not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    # Validate API keys
+    if not settings.GROQ_API_KEY:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+    if not settings.HEYGEN_API_KEY:
+        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY not configured")
     
     # Create job
     job_id = job_manager.create_job()
@@ -236,15 +216,51 @@ async def generate_video(request: GenerateVideoRequest, background_tasks: Backgr
         request
     )
     
-    # Estimate time based on duration and Mochi usage
-    estimated_time = request.duration + (30 if request.include_mochi else 10)
+    # Estimate time: ~5s for script + ~2-5min for HeyGen render
+    estimated_time = 150  # seconds
     
-    return GenerateVideoResponse(
+    return ProcessVideoResponse(
         job_id=job_id,
         status=JobStatus.QUEUED,
         message="Video generation started. Use /job/{job_id} to check progress.",
         estimated_time_seconds=estimated_time
     )
+
+
+@app.post("/api/generate-script", response_model=ScriptOnlyResponse)
+async def generate_script(request: ScriptOnlyRequest):
+    """
+    Generate script only (without video rendering)
+    
+    Useful for previewing the Groq-enhanced script before committing to video
+    """
+    
+    if not settings.GROQ_API_KEY:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+    
+    try:
+        groq = get_groq_service()
+        script = await asyncio.to_thread(
+            groq.generate_script,
+            text=request.text,
+            style=request.style.value,
+            duration_hint=request.duration_hint
+        )
+        
+        # Estimate duration: ~150 words per minute
+        word_count = len(script.split())
+        estimated_duration = int((word_count / 150) * 60)
+        
+        return ScriptOnlyResponse(
+            original_text=request.text,
+            script=script,
+            style=request.style.value,
+            word_count=word_count,
+            estimated_duration_seconds=estimated_duration
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Script generation failed: {e}")
 
 
 @app.get("/job/{job_id}/progress", response_model=JobProgress)
@@ -261,7 +277,7 @@ async def get_job_progress(job_id: str):
 
 @app.get("/job/{job_id}/result", response_model=VideoResult)
 async def get_job_result(job_id: str):
-    """Get job final result (video URL + SRT)"""
+    """Get job final result (video URL)"""
     
     result = job_manager.get_job_result(job_id)
     
@@ -276,60 +292,114 @@ async def get_job_result(job_id: str):
     return result
 
 
-@app.get("/job/{job_id}/video")
-async def download_video(job_id: str):
-    """Download final video file"""
+@app.websocket("/ws/job/{job_id}")
+async def websocket_endpoint(websocket: WebSocket, job_id: str):
+    """
+    WebSocket endpoint for real-time job progress updates
+    """
     
-    result = job_manager.get_job_result(job_id)
+    # Check if job exists
+    progress = job_manager.get_job_progress(job_id)
+    if not progress:
+        await websocket.close(code=1008, reason="Job not found")
+        return
     
-    if not result or not result.video_url:
-        raise HTTPException(status_code=404, detail="Video not found")
+    # Connect the client
+    await job_manager.connection_manager.connect(websocket, job_id)
     
-    video_path = settings.OUTPUT_DIR / f"{job_id}.mp4"
-    
-    if not video_path.exists():
-        raise HTTPException(status_code=404, detail="Video file not found")
-    
-    return FileResponse(
-        video_path,
-        media_type="video/mp4",
-        filename=f"strang_explainer_{job_id}.mp4"
-    )
+    try:
+        # Send initial progress
+        await websocket.send_json({
+            "type": "connected",
+            "job_id": job_id,
+            "status": progress.status.value,
+            "progress_percent": progress.progress_percent,
+            "current_step": progress.current_step,
+            "message": progress.message
+        })
+        
+        # Keep connection alive
+        while True:
+            try:
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_json({"type": "pong"})
+            except WebSocketDisconnect:
+                break
+                
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+    finally:
+        job_manager.connection_manager.disconnect(websocket)
 
 
-@app.get("/job/{job_id}/srt")
-async def download_srt(job_id: str):
-    """Download SRT subtitle file"""
+@app.get("/api/avatars", response_model=AvailableAvatarsResponse)
+async def list_avatars():
+    """Get list of available HeyGen avatars"""
     
-    result = job_manager.get_job_result(job_id)
+    if not settings.HEYGEN_API_KEY:
+        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY not configured")
     
-    if not result or not result.srt_content:
-        raise HTTPException(status_code=404, detail="Subtitles not found")
+    try:
+        heygen = get_heygen_service()
+        avatars_data = await heygen.list_avatars()
+        
+        avatars = [
+            AvatarInfo(
+                avatar_id=a.get("avatar_id", ""),
+                name=a.get("avatar_name", "Unknown"),
+                preview_url=a.get("preview_image_url")
+            )
+            for a in avatars_data
+        ]
+        
+        return AvailableAvatarsResponse(avatars=avatars)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list avatars: {e}")
+
+
+@app.get("/api/voices", response_model=AvailableVoicesResponse)
+async def list_voices():
+    """Get list of available HeyGen voices"""
     
-    from fastapi.responses import Response
+    if not settings.HEYGEN_API_KEY:
+        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY not configured")
     
-    return Response(
-        content=result.srt_content,
-        media_type="text/plain",
-        headers={"Content-Disposition": f"attachment; filename=strang_explainer_{job_id}.srt"}
-    )
+    try:
+        heygen = get_heygen_service()
+        voices_data = await heygen.list_voices()
+        
+        voices = [
+            VoiceInfo(
+                voice_id=v.get("voice_id", ""),
+                name=v.get("name", "Unknown"),
+                language=v.get("language"),
+                gender=v.get("gender")
+            )
+            for v in voices_data
+        ]
+        
+        return AvailableVoicesResponse(voices=voices)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list voices: {e}")
 
 
 if __name__ == "__main__":
     print(f"""
-╔══════════════════════════════════════════════════════════╗
-║                                                          ║
-║     🎬 Strang Video Generation Backend                  ║
-║                                                          ║
-║     Hybrid Manim + Mochi Pipeline                       ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝
+==============================================================
+    Strang Video Generation Backend v3.0
+    Groq (FREE) + HeyGen Pipeline
+==============================================================
 
 Config:
-  • Mochi: {'✓ Enabled' if settings.MOCHI_ENABLED else '✗ Disabled'}
-  • TTS: {settings.TTS_PROVIDER}
-  • Output: {settings.OUTPUT_DIR}
-  • Port: {settings.PORT}
+  - AI Provider: Groq API (FREE and FAST!)
+  - Groq Model: {settings.GROQ_MODEL}
+  - Video Provider: HeyGen
+  - HeyGen Avatar: {settings.HEYGEN_AVATAR_ID}
+  - Output: {settings.OUTPUT_DIR}
+  - Port: {settings.PORT}
 
 Starting server...
 """)

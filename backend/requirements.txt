@@ -1,27 +1,21 @@
-# Backend requirements for Strang hybrid video generation
+# Backend requirements for Strang v3.0
+# Groq (FREE) + HeyGen Avatar Video Generation
 
 # Web framework
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
+websockets==12.0  # WebSocket support for real-time progress
 
-# AI/ML
-google-generativeai==0.8.3   # Google Gemma / Gemini API client
-openai==1.12.0               # For TTS fallback
-
-# Video generation
-              # Manim for slides
-# For Mochi, install separately: git clone https://github.com/genmoai/mochi
-
-# Video processing
-ffmpeg-python==0.2.0
+# AI Services
+groq>=0.11.0       # Groq API for FREE and FAST script generation
+httpx>=0.28.1      # HTTP client for async requests (HeyGen API)
 
 # Utilities
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
 python-dotenv==1.0.0
 aiofiles==23.2.1
-redis==5.0.1                 # For job queue
 
-# Storage (optional)
-boto3==1.34.34               # For S3 if needed
+# Optional (for production)
+redis==5.0.1       # For job queue persistence

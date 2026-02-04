@@ -1,423 +1,256 @@
-# Strang – Hybrid AI Explainer Video Chrome Extension
+# Strang – AI Avatar Video Generator
 
-🎬 **Transform any webpage text into professional explainer videos with AI**
+🎬 **Transform any text into professional AI avatar videos with HuggingFace + HeyGen**
 
-Strang is a Chrome Extension that combines:
-- **Claude AI** for intelligent script generation and scene planning
-- **Manim** for beautiful animated slides (3Blue1Brown style)
-- **Mochi AI** for photorealistic B-roll footage
-- **Text-to-Speech** for natural voiceovers
-- **Auto-compositing** with subtitles and smooth transitions
+Strang is a Chrome Extension that turns selected text into engaging avatar videos using:
+- **HuggingFace Inference API** for intelligent script generation (Mistral-7B-Instruct-v0.2)
+- **HeyGen** for photorealistic AI avatar video rendering
 
-## 🎯 Features
+## ✨ Features
 
-✅ Highlight text → Right-click → Generate video  
-✅ Multiple explanation styles (Simple, Academic, Child-friendly, Technical)  
-✅ Hybrid rendering: Text slides (Manim) + Realistic visuals (Mochi)  
-✅ AI-powered scene classification and timing  
-✅ Professional voiceovers with TTS  
-✅ SRT subtitle export  
+✅ Select text on any webpage → Generate avatar video  
+✅ HuggingFace transforms your content into natural, engaging scripts  
+✅ HeyGen renders professional AI avatar presentations  
+✅ Real-time progress updates via WebSocket  
 ✅ Dark mode support  
-✅ Local fallback mode (works without backend)  
+✅ Simple, clean interface  
 
 ## 🏗️ Architecture
 
-**Two Operation Modes:**
-
-### Mode 1: Full Backend (Recommended)
 ```
-Extension → Backend API → Claude → Scene Intelligence
-                           ├─ Text Slides → Manim → .mp4
-                           ├─ B-Roll → Mochi → .mp4
-                           └─ TTS → Voiceover
-                       → FFmpeg → Final Video + SRT
+Chrome Extension → FastAPI Backend → HuggingFace → Script
+                                   → HeyGen → Avatar Video
+                                   
+WebSocket provides real-time progress updates
 ```
 
-### Mode 2: Local Fallback
-```
-Extension → aiMock.js → Simple plan
-         → videoRenderer.js → Canvas animation → WebM
-```
+### How It Works
 
-## Project Structure
-
-- `manifest.json` – MV3 manifest, background service worker, content script, permissions.
-- `background.js` – Service worker:
-  - Creates context menu (`Generate Explainer Video with Strang`).
-  - Stores last text selection.
-  - Exposes message handlers for:
-    - `GET_LAST_SELECTION`
-    - `REQUEST_ACTIVE_SELECTION`
-    - `GENERATE_VIDEO_REQUEST`
-  - Runs the mock AI pipeline (`aiMock.js`).
-  - Broadcasts progress updates to the popup.
-- `content.js` – Content script:
-  - Tracks current text selection via `selectionchange`.
-  - Responds to `GET_SELECTION` messages from the background.
-- `popup.html` – Popup UI:
-  - Editable text area.
-  - Style selector (simple / academic / child-friendly / technical).
-  - Video length selector (30 / 60 / 120 seconds).
-  - Voice accent placeholder selector.
-  - Dark mode toggle.
-  - Generate button, loader, status text.
-  - Video preview + playback speed.
-  - Download buttons for `.webm` and `.srt`.
-- `styles.css` – Minimal light/dark styling for the popup.
-- `popup.js` – Popup logic:
-  - Fetches last selection from background (or active selection from content script).
-  - Sends `GENERATE_VIDEO_REQUEST` to background.
-  - Receives `VIDEO_PROGRESS` events.
-  - Calls `renderExplainerVideo` (`videoRenderer.js`) and shows preview.
-  - Handles video + SRT downloads and dark mode.
-- `aiMock.js` – Mock AI pipeline:
-  - Step 1: builds `teachingScript`, `bulletBreakdown`, `keyConcepts`.
-  - Step 2: generates `scenes` with timings and animation directives.
-  - Step 3: builds a `voiceoverScript`.
-- `videoRenderer.js` – Front-end video composer:
-  - Uses `canvas` + `MediaRecorder` to output WebM.
-  - Renders scenes with simple animations and subtitles.
-  - Returns `{ blob, url, srt, timings }`.
+1. **User selects text** on any webpage
+2. **Extension captures** the selection
+3. **HuggingFace** transforms text into a professional script with natural pauses
+4. **HeyGen** renders an AI avatar speaking the script
+5. **Video is delivered** for preview and download
 
 ## 🚀 Quick Start
 
-### Option A: Local Mode Only (No Backend)
+### 1. Get API Keys
 
-Perfect for testing the extension UI without deploying a backend.
+- **HuggingFace**: Get your API token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (free tier available!)
+- **HeyGen**: Get your API key at [app.heygen.com/settings/api](https://app.heygen.com/settings/api)
 
-1. **Load Extension**
-   ```bash
-   # Open Chrome → chrome://extensions/
-   # Enable "Developer mode"
-   # Click "Load unpacked" → Select this folder
-   ```
+### 2. Setup Backend
 
-2. **Configure Local Mode**
-   - Edit `background.js`:
-     ```javascript
-     const USE_BACKEND = false;  // Line 18
-     ```
-
-3. **Test It**
-   - Highlight text on any page
-   - Right-click → "Generate Explainer Video with Strang"
-   - Get a basic canvas-rendered video
-
-### Option B: Full Backend (Recommended)
-
-For production-quality videos with Claude + Manim + Mochi.
-
-1. **Setup Backend** (see `backend/README.md`)
-   ```bash
-   cd backend
-   pip install -r requirements.txt
-   # Configure .env with API keys
-   python main.py
-   ```
-
-2. **Load Extension**
-   ```bash
-   # Open Chrome → chrome://extensions/
-   # Enable "Developer mode"
-   # Click "Load unpacked" → Select project root folder
-   ```
-
-3. **Configure Backend Mode**
-   - Edit `background.js`:
-     ```javascript
-     const BACKEND_URL = 'http://localhost:8000';  // Line 17
-     const USE_BACKEND = true;  // Line 18
-     ```
-
-4. **Test It**
-   - Highlight text on any page
-   - Right-click → "Generate Explainer Video with Strang"
-   - Wait for backend processing (progress updates in popup)
-   - Get professional video with slides + B-roll + voiceover
-
----
-
-## 📖 Detailed Setup
-
-### Extension Installation
-
-1. Clone repository:
-   ```bash
-   git clone <your-repo>
-   cd strang
-   ```
-
-2. Load in Chrome:
-   - Navigate to `chrome://extensions/`
-   - Enable **Developer mode** (top-right)
-   - Click **Load unpacked**
-   - Select the `strang` folder (root, not `backend`)
-
-3. Pin extension to toolbar
-
-### Backend Installation
-
-See detailed guide: **[backend/README.md](backend/README.md)**
-
-**Quick version:**
 ```bash
 cd backend
-
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install dependencies
+# Windows
+venv\Scripts\activate
+
+# macOS/Linux
+source venv/bin/activate
+
 pip install -r requirements.txt
 
-# Configure API keys
+# Configure environment
 cp env.example .env
-# Edit .env and add ANTHROPIC_API_KEY
+# Edit .env and add your API keys:
+# HF_API_KEY=your_huggingface_token
+# HEYGEN_API_KEY=your_heygen_key
 
 # Run server
 python main.py
 ```
 
-**Requirements:**
-- Python 3.9+
-- FFmpeg
-- Anthropic API key (Claude)
-- Optional: GPU for Mochi (60GB VRAM)
+Server runs at `http://localhost:8000`
 
----
+### 3. Load Chrome Extension
 
-## 🎯 Usage Guide
+1. Open Chrome → `chrome://extensions/`
+2. Enable **Developer mode** (top right)
+3. Click **Load unpacked**
+4. Select this project folder
 
-### Basic Flow
+### 4. Use It!
 
-1. **Select Text**
-   - Highlight any text on a webpage
-   - Right-click → **"Generate Explainer Video with Strang"**
-   - OR click extension icon → **"Use current page selection"**
-
-2. **Configure Settings**
-   - **Explanation Style**: Simple / Academic / Child-friendly / Technical
-   - **Video Length**: 30s / 60s / 120s
-   - **Voice Accent**: US / UK / AU / Neutral
-
-3. **Generate**
-   - Click **"Generate explainer video"**
-   - Watch progress updates
-   - Wait for completion (30s-2min depending on mode)
-
-4. **Preview & Download**
-   - Play video in popup
-   - Adjust playback speed
-   - Download:
-     - **Video** (.mp4 or .webm)
-     - **Subtitles** (.srt)
-
-### Dark Mode
-
-Toggle dark mode in popup for comfortable viewing.
-
----
+1. **Highlight text** on any webpage
+2. **Right-click** → "Generate Avatar Video with Strang"  
+   OR click the extension icon
+3. Click **"Generate Avatar Video"**
+4. Watch real-time progress
+5. Preview and download your video!
 
 ## 📁 Project Structure
 
 ```
 strang/
 ├── manifest.json          # Chrome MV3 manifest
-├── background.js          # Service worker (API calls, context menu)
-├── content.js            # Selection tracking
-├── popup.html            # UI layout
-├── popup.js              # UI logic + backend polling
-├── styles.css            # Dark/light theme
-├── aiMock.js             # Local fallback pipeline
-├── videoRenderer.js      # Local canvas renderer
-├── README.md             # This file
-└── backend/              # Python FastAPI backend
-    ├── main.py           # API server
-    ├── config.py         # Configuration
-    ├── models.py         # Pydantic models
-    ├── requirements.txt  # Python dependencies
+├── background.js          # Service worker (API, WebSocket)
+├── content.js             # Text selection capture
+├── popup.html             # Extension UI
+├── popup.js               # UI logic
+├── styles.css             # Styling
+│
+└── backend/               # FastAPI server
+    ├── main.py            # API endpoints
+    ├── config.py          # Configuration
+    ├── models.py          # Pydantic models
+    ├── requirements.txt   # Python dependencies
     ├── services/
-    │   ├── claude_service.py      # Claude integration
-    │   ├── manim_generator.py     # Manim slides
-    │   ├── mochi_service.py       # Mochi B-roll
-    │   ├── tts_service.py         # Text-to-speech
-    │   └── compositor.py          # FFmpeg video assembly
-    ├── utils/
-    │   └── job_manager.py         # Async job queue
-    └── README.md                  # Backend setup guide
+    │   ├── huggingface_service.py  # HuggingFace integration
+    │   └── heygen_service.py       # HeyGen integration
+    └── utils/
+        └── job_manager.py     # Async job queue
 ```
-
----
 
 ## 🔧 Configuration
 
-### Extension Config (`background.js`)
-
-```javascript
-const BACKEND_URL = 'http://localhost:8000';  // Your backend URL
-const USE_BACKEND = true;  // true = backend mode, false = local mock
-```
-
-### Backend Config (`backend/.env`)
+### Backend (.env)
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-xxxxx       # Required: Claude API
-OPENAI_API_KEY=sk-xxxxx              # Optional: TTS
-MOCHI_ENABLED=true                   # Requires GPU
-TTS_PROVIDER=openai                  # openai / elevenlabs / none
+# Required
+HF_API_KEY=your_huggingface_token
+HEYGEN_API_KEY=your_heygen_api_key
+
+# HuggingFace Settings
+HF_MODEL=mistralai/Mistral-7B-Instruct-v0.2
+
+# HeyGen Settings  
+HEYGEN_AVATAR_ID=Angela-inblackskirt-20220820
+HEYGEN_VOICE_ID=1bd001e7e50f421d891986aad5158bc8
+
+# Server
+HOST=0.0.0.0
+PORT=8000
 ```
 
-See `backend/env.example` for all options.
+### Extension (background.js)
 
----
+```javascript
+const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_WS_URL = 'ws://localhost:8000';
+```
+
+## 📡 API Endpoints
+
+### Generate Video
+```http
+POST /api/process-video
+Content-Type: application/json
+
+{
+  "text": "Your content here...",
+  "style": "professional",
+  "fast_scripting": true
+}
+```
+
+### Generate Script Only
+```http
+POST /api/generate-script
+Content-Type: application/json
+
+{
+  "text": "Your content here...",
+  "style": "professional",
+  "duration_hint": 60
+}
+```
+
+### Check Progress
+```http
+GET /job/{job_id}/progress
+```
+
+### Get Result
+```http
+GET /job/{job_id}/result
+```
+
+### WebSocket Updates
+```
+ws://localhost:8000/ws/job/{job_id}
+```
+
+### List Avatars/Voices
+```http
+GET /api/avatars
+GET /api/voices
+```
 
 ## 💰 Cost Estimates
 
-**Per 60-second video with full backend:**
+| Service | Cost per Video |
+|---------|----------------|
+| HuggingFace Inference API | **FREE** (free tier available!) |
+| HeyGen | ~$0.10-0.50 (depends on plan) |
+| **Total** | **~$0.10-0.50** |
 
-| Component | Cost |
-|-----------|------|
-| Claude API (script generation) | $0.02 |
-| OpenAI TTS (voiceover) | $0.10 |
-| Mochi (GPU rental 2min) | $0.05 |
-| **Total** | **~$0.17** |
+**Note:** HuggingFace free tier may have rate limits and cold start delays. For production use, consider upgrading or using serverless inference endpoints.
 
-**Without Mochi (CPU-only):** ~$0.12/video
+## 🎨 Script Styles
 
-**Local mode:** Free (but lower quality)
-
----
-
-## 🐛 Troubleshooting
-
-### Extension Issues
-
-**"No text selected"**
-- Ensure text is highlighted
-- Try refreshing the page
-- Check content script loaded (inspect console)
-
-**"Failed to connect to backend"**
-- Verify backend is running: `curl http://localhost:8000`
-- Check `BACKEND_URL` in `background.js`
-- Check CORS settings in `backend/main.py`
-
-### Backend Issues
-
-**"ANTHROPIC_API_KEY not configured"**
-- Copy `backend/env.example` to `backend/.env`
-- Add your Claude API key
-
-**"Mochi generation failed"**
-- Check GPU available: `nvidia-smi`
-- Or disable Mochi: `MOCHI_ENABLED=false` in `.env`
-
-**"Manim rendering failed"**
-- Install LaTeX (optional but helps)
-- Fallback PIL renderer will be used automatically
-
-See detailed troubleshooting: **[backend/README.md](backend/README.md)**
-
----
-
-## 🚢 Deployment
-
-### Extension
-- Load unpacked in Chrome (development)
-- Or publish to Chrome Web Store (production)
-
-### Backend
-
-**Options:**
-1. **GPU Cloud** (for Mochi):
-   - RunPod: $1.50/hr H100
-   - Lambda Labs: $1.99/hr A100
-   
-2. **CPU VPS** (without Mochi):
-   - DigitalOcean: $24/mo (4 vCPU)
-   - Railway / Render: Easy deploys
-
-3. **Docker**:
-   ```bash
-   cd backend
-   docker build -t strang-backend .
-   docker run -p 8000:8000 --env-file .env strang-backend
-   ```
-
-See deployment guide: **[backend/README.md](backend/README.md)**
-
----
-
-## 📊 Performance
-
-**Local Mode:**
-- Generation time: 5-10 seconds
-- Video quality: Basic canvas animations
-- Cost: Free
-
-**Backend Mode (CPU-only):**
-- Generation time: 30-60 seconds
-- Video quality: Professional Manim slides
-- Cost: ~$0.12/video
-
-**Backend Mode (Full with Mochi):**
-- Generation time: 60-120 seconds
-- Video quality: Hybrid slides + photorealistic B-roll
-- Cost: ~$0.17/video
-
----
+- **Professional**: Business-ready, clear and authoritative
+- **Casual**: Conversational, relaxed tone
+- **Educational**: Structured for learning, clear explanations
+- **Friendly**: Warm, approachable, personable
 
 ## 🛠️ Tech Stack
 
 **Extension:**
-- Manifest V3
-- Vanilla JavaScript (ES6+)
-- Chrome APIs (storage, tabs, contextMenus)
-- Canvas API + MediaRecorder
+- Chrome Manifest V3
+- Vanilla JavaScript
+- Chrome Storage API
 
 **Backend:**
 - FastAPI (Python)
-- Claude Sonnet 4 (Anthropic)
-- Manim (3Blue1Brown animation engine)
-- Mochi AI (Genmo video generation)
-- FFmpeg (video compositing)
-- OpenAI TTS / ElevenLabs (voiceover)
+- huggingface-hub (HuggingFace Inference API)
+- httpx (async HTTP)
+- WebSockets
 
----
+**AI Services:**
+- HuggingFace Inference API (Mistral-7B-Instruct-v0.2) - Script generation
+- HeyGen - Avatar video rendering
 
-## 📝 Notes
+## ⚡ Why HuggingFace Inference API?
 
-- Text limit: 3000 characters (configurable)
-- Supported video formats: MP4 (backend), WebM (local)
-- Subtitle format: SRT (SubRip)
-- Browser support: Chrome/Edge (Manifest V3)
+- **Free tier** - No hosting costs with free API quota
+- **Official models** - Access to high-quality open-source models
+- **No setup** - Direct API calls, no infrastructure needed
+- **Flexible** - Easy to switch between different models
 
----
+## 🐛 Troubleshooting
+
+### "HF_API_KEY not configured"
+- Copy `backend/env.example` to `backend/.env`
+- Add your HuggingFace API token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+
+### "HEYGEN_API_KEY not configured"  
+- Add your HeyGen API key to `.env`
+
+### "Failed to connect to backend"
+- Ensure backend is running: `python main.py`
+- Check URL in `background.js`
+
+### "Model is loading" or cold start delays
+- HuggingFace Inference API may have cold starts (10-30 seconds)
+- The service automatically retries with backoff
+- Consider using popular models that are kept warm
+
+### Script generation is slow
+- Free tier models may be slower than paid services
+- Try switching to a lighter model in `.env` (e.g., `google/flan-t5-xxl`)
+- Rate limits may apply - wait a bit between requests
+
+### Video takes too long
+- HeyGen rendering typically takes 1-5 minutes
+- Progress updates appear in real-time
 
 ## 📜 License
 
-MIT License - see LICENSE file
+MIT License - See LICENSE file
 
 ---
 
-## 🤝 Contributing
-
-Contributions welcome! Areas for improvement:
-- Additional TTS providers
-- More animation styles in Manim
-- Video quality optimizations
-- UI/UX enhancements
-
----
-
-## 🎓 Learn More
-
-- **Manim**: [3b1b/manim](https://github.com/3b1b/manim)
-- **Mochi**: [genmoai/mochi](https://github.com/genmoai/mochi)
-- **Claude API**: [docs.anthropic.com](https://docs.anthropic.com)
-
----
-
-**Built with ❤️ for educators, creators, and knowledge sharers**
-
-# DR.strang
+**Built with ❤️ using HuggingFace + HeyGen**

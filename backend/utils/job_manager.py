@@ -2,11 +2,65 @@
 Job manager for async video generation with progress tracking
 """
 import asyncio
-from typing import Dict, Optional, Callable
+from typing import Dict, Optional, Callable, Set
 from datetime import datetime
 import uuid
 from models import JobStatus, JobProgress, VideoResult
 from pathlib import Path
+from fastapi import WebSocket
+
+
+class ConnectionManager:
+    """Manage WebSocket connections for real-time progress updates"""
+    
+    def __init__(self):
+        self.active_connections: Dict[str, Set[WebSocket]] = {}  # job_id -> set of websockets
+        self.connection_jobs: Dict[WebSocket, str] = {}  # websocket -> job_id
+    
+    async def connect(self, websocket: WebSocket, job_id: str):
+        """Connect a client to a specific job's updates"""
+        await websocket.accept()
+        
+        if job_id not in self.active_connections:
+            self.active_connections[job_id] = set()
+        
+        self.active_connections[job_id].add(websocket)
+        self.connection_jobs[websocket] = job_id
+        
+        print(f"[WebSocket] Client connected to job {job_id[:8]}")
+    
+    def disconnect(self, websocket: WebSocket):
+        """Disconnect a client"""
+        if websocket in self.connection_jobs:
+            job_id = self.connection_jobs[websocket]
+            
+            if job_id in self.active_connections:
+                self.active_connections[job_id].discard(websocket)
+                
+                # Clean up empty sets
+                if not self.active_connections[job_id]:
+                    del self.active_connections[job_id]
+            
+            del self.connection_jobs[websocket]
+            print(f"[WebSocket] Client disconnected from job {job_id[:8]}")
+    
+    async def broadcast_to_job(self, job_id: str, message: dict):
+        """Broadcast a message to all clients watching a specific job"""
+        if job_id not in self.active_connections:
+            return
+        
+        disconnected = set()
+        
+        for connection in self.active_connections[job_id]:
+            try:
+                await connection.send_json(message)
+            except Exception as e:
+                print(f"[WebSocket] Error sending to client: {e}")
+                disconnected.add(connection)
+        
+        # Clean up disconnected clients
+        for connection in disconnected:
+            self.disconnect(connection)
 
 
 class JobManager:
@@ -16,6 +70,7 @@ class JobManager:
         self.jobs: Dict[str, JobProgress] = {}
         self.results: Dict[str, VideoResult] = {}
         self.tasks: Dict[str, asyncio.Task] = {}
+        self.connection_manager = ConnectionManager()
     
     def create_job(self) -> str:
         """Create a new job and return its ID"""
@@ -47,36 +102,50 @@ class JobManager:
         current_step: str,
         message: str
     ):
-        """Update job progress"""
+        """Update job progress and broadcast to WebSocket clients"""
+        print(f"[DEBUG] update_progress called for {job_id[:8]}, job exists: {job_id in self.jobs}", flush=True)
         if job_id in self.jobs:
             self.jobs[job_id].status = status
             self.jobs[job_id].progress_percent = progress_percent
             self.jobs[job_id].current_step = current_step
             self.jobs[job_id].message = message
             
-            print(f"[{job_id[:8]}] {progress_percent}% - {message}")
+            print(f"[{job_id[:8]}] {progress_percent}% - {message}", flush=True)
+            
+            # Broadcast to WebSocket clients
+            asyncio.create_task(
+                self.connection_manager.broadcast_to_job(
+                    job_id,
+                    {
+                        "type": "progress",
+                        "job_id": job_id,
+                        "status": status.value,
+                        "progress_percent": progress_percent,
+                        "current_step": current_step,
+                        "message": message
+                    }
+                )
+            )
     
     def set_result(
         self,
         job_id: str,
         video_url: Optional[str] = None,
-        srt_content: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
         duration: Optional[float] = None,
-        metadata: Optional[dict] = None,
+        script: Optional[str] = None,
         error: Optional[str] = None
     ):
-        """Set final job result"""
+        """Set final job result and broadcast to WebSocket clients"""
         status = JobStatus.COMPLETED if not error else JobStatus.FAILED
         
         self.results[job_id] = VideoResult(
             job_id=job_id,
             status=status,
             video_url=video_url,
-            srt_content=srt_content,
             thumbnail_url=thumbnail_url,
             duration=duration,
-            metadata=metadata,
+            script=script,
             error=error
         )
         
@@ -86,6 +155,23 @@ class JobManager:
             self.jobs[job_id].progress_percent = 100 if not error else 0
             if error:
                 self.jobs[job_id].error = error
+        
+        # Broadcast completion to WebSocket clients
+        asyncio.create_task(
+            self.connection_manager.broadcast_to_job(
+                job_id,
+                {
+                    "type": "complete" if not error else "error",
+                    "job_id": job_id,
+                    "status": status.value,
+                    "video_url": video_url,
+                    "thumbnail_url": thumbnail_url,
+                    "duration": duration,
+                    "script": script,
+                    "error": error
+                }
+            )
+        )
     
     async def run_job(
         self,
@@ -102,6 +188,7 @@ class JobManager:
             job_func: The actual processing function (can be sync or async)
             *args, **kwargs: Arguments for job_func
         """
+        print(f"[JobManager] run_job started for {job_id[:8]}", flush=True)
         
         try:
             self.update_progress(
@@ -145,8 +232,14 @@ class JobManager:
         **kwargs
     ):
         """Start a job in the background"""
-        task = asyncio.create_task(self.run_job(job_id, job_func, *args, **kwargs))
-        self.tasks[job_id] = task
+        print(f"[JobManager] Starting async job {job_id[:8]}...", flush=True)
+        try:
+            task = asyncio.create_task(self.run_job(job_id, job_func, *args, **kwargs))
+            self.tasks[job_id] = task
+            print(f"[JobManager] Task created for job {job_id[:8]}", flush=True)
+        except Exception as e:
+            print(f"[JobManager] ERROR creating task: {e}", flush=True)
+            raise
     
     def cleanup_old_jobs(self, max_age_hours: int = 24):
         """Remove old jobs from memory"""

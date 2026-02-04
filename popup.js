@@ -1,12 +1,9 @@
 // popup.js
 // Handles popup UI interactions:
-// - Loads last selection (from context menu or content script)
-// - Sends GENERATE_VIDEO_REQUEST to background
-// - Receives progress updates
-// - Calls videoRenderer to compose a preview video
-// - Exposes download options for video and SRT
-
-import { renderExplainerVideo } from './videoRenderer.js';
+// - Loads selected text from chrome.storage on init
+// - Sends request to /api/process-video endpoint
+// - Receives progress updates via WebSocket
+// - Displays video preview and download options
 
 const MAX_TEXT_LENGTH = 3000;
 
@@ -16,28 +13,20 @@ const elements = {
   charCount: document.getElementById('charCount'),
   refreshSelectionBtn: document.getElementById('refreshSelectionBtn'),
   styleSelect: document.getElementById('styleSelect'),
-  durationSelect: document.getElementById('durationSelect'),
-  accentSelect: document.getElementById('accentSelect'),
   darkModeToggle: document.getElementById('darkModeToggle'),
   generateBtn: document.getElementById('generateBtn'),
   loader: document.getElementById('loader'),
   statusText: document.getElementById('statusText'),
   errorText: document.getElementById('errorText'),
   previewVideo: document.getElementById('previewVideo'),
-  speedSelect: document.getElementById('speedSelect'),
   downloadVideoBtn: document.getElementById('downloadVideoBtn'),
-  downloadSrtBtn: document.getElementById('downloadSrtBtn')
 };
 
-let currentVideoBlob = null;
 let currentVideoUrl = null;
-let currentSrt = '';
-let currentPlan = null;
 
 const STORAGE_KEYS = {
   UI_STATE: 'uiState',
-  LAST_SELECTION: 'lastSelection',
-  LAST_PLAN: 'lastPlan'
+  SELECTED_TEXT: 'selectedText'
 };
 
 init();
@@ -45,14 +34,14 @@ init();
 function init() {
   attachEventListeners();
   restoreUiState().then(() => {
-    loadInitialSelection();
-    loadLastPlan();
+    loadSelectedText();
   });
 
+  // Listen for progress updates from background script
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'VIDEO_PROGRESS' && message.payload) {
-      const { step, status, message: msg } = message.payload;
-      handleProgress(step, status, msg);
+      const { step, status, message: msg, progress_percent } = message.payload;
+      handleProgress(step, status, msg, progress_percent);
     } else if (message.type === 'SELECTION_UPDATED') {
       const payload = message.payload;
       if (payload?.text && !elements.inputText.value) {
@@ -85,13 +74,6 @@ function attachEventListeners() {
 
   elements.generateBtn.addEventListener('click', handleGenerateClick);
 
-  elements.speedSelect.addEventListener('change', () => {
-    if (elements.previewVideo) {
-      const rate = parseFloat(elements.speedSelect.value || '1');
-      elements.previewVideo.playbackRate = isNaN(rate) ? 1 : rate;
-    }
-  });
-
   elements.darkModeToggle.addEventListener('change', () => {
     const isDark = elements.darkModeToggle.checked;
     toggleDarkMode(isDark);
@@ -99,22 +81,11 @@ function attachEventListeners() {
   });
 
   elements.downloadVideoBtn.addEventListener('click', () => {
-    if (!currentVideoBlob && !currentVideoUrl) return;
-    const url = currentVideoUrl || URL.createObjectURL(currentVideoBlob);
-    const filename = currentVideoUrl ? 'strang-explainer.mp4' : 'strang-explainer.webm';
-    triggerDownload(url, filename);
-  });
-
-  elements.downloadSrtBtn.addEventListener('click', () => {
-    if (!currentSrt) return;
-    const blob = new Blob([currentSrt], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    triggerDownload(url, 'strang-explainer.srt');
+    if (!currentVideoUrl) return;
+    triggerDownload(currentVideoUrl, 'strang-avatar-video.mp4');
   });
 
   elements.styleSelect.addEventListener('change', persistUiState);
-  elements.durationSelect.addEventListener('change', persistUiState);
-  elements.accentSelect.addEventListener('change', persistUiState);
 }
 
 async function restoreUiState() {
@@ -128,15 +99,21 @@ async function restoreUiState() {
   if (state.style) {
     elements.styleSelect.value = state.style;
   }
-  if (state.duration) {
-    elements.durationSelect.value = String(state.duration);
-  }
-  if (state.voiceAccent) {
-    elements.accentSelect.value = state.voiceAccent;
-  }
 }
 
-async function loadInitialSelection() {
+async function loadSelectedText() {
+  // First try to get text from chrome.storage (set by content.js on mouseup)
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.SELECTED_TEXT);
+  const selectedText = stored[STORAGE_KEYS.SELECTED_TEXT];
+  
+  if (selectedText && selectedText.trim()) {
+    elements.inputText.value = selectedText;
+    updateCharCount();
+    setStatus('Loaded selected text.', false);
+    return;
+  }
+  
+  // Fallback: try to get last selection from background script
   const response = await chrome.runtime.sendMessage({ type: 'GET_LAST_SELECTION' });
   if (response?.success && response.lastSelection?.text) {
     elements.inputText.value = response.lastSelection.text;
@@ -144,15 +121,6 @@ async function loadInitialSelection() {
     setStatus('Loaded last selection.', false);
   } else {
     setStatus('Waiting for input...', false);
-  }
-}
-
-async function loadLastPlan() {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.LAST_PLAN);
-  const plan = stored[STORAGE_KEYS.LAST_PLAN];
-  if (plan) {
-    currentPlan = plan;
-    setStatus('Previous plan available. Regenerate to preview again.', false);
   }
 }
 
@@ -169,6 +137,7 @@ function updateCharCount() {
 async function handleGenerateClick() {
   clearError();
   const rawText = elements.inputText.value.trim();
+  
   if (!rawText) {
     showError('Please enter or select some text first.');
     return;
@@ -178,100 +147,129 @@ async function handleGenerateClick() {
     return;
   }
 
-  const style = elements.styleSelect.value || 'simple';
-  const duration = parseInt(elements.durationSelect.value || '60', 10);
-  const voiceAccent = elements.accentSelect.value || 'neutral';
-  const includeMochi = true;  // Can make this a toggle in UI later
+  const style = elements.styleSelect.value || 'professional';
 
   elements.generateBtn.disabled = true;
-  setStatus('Generating plan...', true);
+  setStatus('Sending to Groq AI...', true);
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'GENERATE_VIDEO_REQUEST',
       payload: {
         text: rawText,
-        style,
-        duration,
-        voiceAccent,
-        includeMochi
+        style
       }
     });
 
     if (!response?.success) {
-      showError(response?.message || 'Failed to generate explainer video plan.');
+      showError(response?.message || 'Failed to start video generation.');
       setStatus('Generation failed.', false);
       elements.generateBtn.disabled = false;
       return;
     }
 
-    // Check if backend mode (has jobId) or local mode (has plan)
     if (response.jobId) {
-      // Backend mode - poll for progress
-      await handleBackendGeneration(response.jobId);
-    } else if (response.plan) {
-      // Local mode - render locally
-      currentPlan = response.plan;
-      setStatus('Composing video...', true);
-      await composeVideoFromPlan(currentPlan);
-      setStatus('Video ready. Preview and download below.', false);
+      // Backend mode - wait for WebSocket/polling updates
+      await handleBackendGeneration(response.jobId, response.websocket_available);
     } else {
       throw new Error('Invalid response from backend');
     }
 
   } catch (err) {
     console.error('Generate error', err);
-    showError('Unexpected error while generating explainer.');
+    showError('Unexpected error while generating video.');
     setStatus('Generation failed.', false);
   } finally {
     elements.generateBtn.disabled = false;
   }
 }
 
-async function handleBackendGeneration(jobId) {
-  // Poll for job progress until complete
+async function handleBackendGeneration(jobId, websocketAvailable) {
   let completed = false;
-  let attempts = 0;
-  const MAX_ATTEMPTS = 300;  // 300 * 2s = 10 minutes max
-
-  while (!completed && attempts < MAX_ATTEMPTS) {
-    attempts++;
-
-    await new Promise(resolve => setTimeout(resolve, 2000));  // Poll every 2 seconds
-
-    try {
-      const progressResponse = await chrome.runtime.sendMessage({
-        type: 'POLL_JOB_PROGRESS',
-        payload: { jobId }
-      });
-
-      if (progressResponse?.success && progressResponse.progress) {
-        const { status, progress_percent, message } = progressResponse.progress;
-        
-        setStatus(`${message} (${progress_percent}%)`, true);
-
-        if (status === 'completed') {
-          completed = true;
-          break;
-        } else if (status === 'failed') {
-          showError(progressResponse.progress.error || 'Video generation failed on backend');
-          setStatus('Generation failed.', false);
-          return;
-        }
+  let lastProgressAt = Date.now();
+  let pollIntervalId = null;
+  
+  // Listen for progress updates from background script
+  const progressListener = async (message) => {
+    if (message.type === 'VIDEO_PROGRESS' && message.payload) {
+      const { status, progress_percent, message: msg } = message.payload;
+      lastProgressAt = Date.now();
+      
+      if (progress_percent !== undefined) {
+        setStatus(`${msg} (${progress_percent}%)`, true);
+      } else {
+        setStatus(msg, true);
       }
-    } catch (err) {
-      console.error('Polling error:', err);
-      // Continue polling
+      
+      if (status === 'completed') {
+        completed = true;
+        // Immediately fetch the final result
+        await fetchFinalResult(jobId);
+      } else if (status === 'error' || status === 'failed') {
+        showError(msg || 'Video generation failed');
+        setStatus('Generation failed.', false);
+        completed = true;
+      }
     }
-  }
+  };
+  
+  chrome.runtime.onMessage.addListener(progressListener);
 
-  if (!completed) {
-    showError('Video generation timed out. Please try again.');
-    setStatus('Generation timed out.', false);
-    return;
+  const startPolling = () => {
+    if (pollIntervalId) return;
+    pollIntervalId = setInterval(async () => {
+      if (completed) return;
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: 'POLL_JOB_PROGRESS',
+          payload: { jobId }
+        });
+        if (response?.success && response.progress) {
+          const progress = response.progress;
+          handleProgress(
+            progress.current_step,
+            progress.status,
+            progress.message,
+            progress.progress_percent
+          );
+        } else if (response?.success && response.progress?.status === 'completed') {
+          completed = true;
+          await fetchFinalResult(jobId);
+        } else if (response?.errorCode === 'POLL_ERROR'
+          && response?.message?.includes('HTTP 404')) {
+          showError('Job not found. The backend may have restarted.');
+          setStatus('Generation failed.', false);
+          completed = true;
+        }
+      } catch (err) {
+        console.error('Progress poll failed', err);
+      }
+    }, 5000);
+  };
+  
+  if (!websocketAvailable) {
+    startPolling();
   }
+  
+  // Wait for completion (no timeout - HeyGen can take 5-10 minutes)
+  const startTime = Date.now();
+  
+  while (!completed) {
+    // If WebSocket stops sending updates, start polling
+    if (websocketAvailable && Date.now() - lastProgressAt > 8000) {
+      startPolling();
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  
+  // Clean up listener
+  chrome.runtime.onMessage.removeListener(progressListener);
+  if (pollIntervalId) {
+    clearInterval(pollIntervalId);
+  }
+}
 
-  // Get final result
+async function fetchFinalResult(jobId) {
   setStatus('Fetching final video...', true);
   
   try {
@@ -289,46 +287,22 @@ async function handleBackendGeneration(jobId) {
     // Set video preview
     if (result.video_url) {
       currentVideoUrl = result.video_url;
-      currentSrt = result.srt_content || '';
       
       elements.previewVideo.src = result.video_url;
       elements.previewVideo.load();
       
       elements.downloadVideoBtn.disabled = false;
-      elements.downloadSrtBtn.disabled = !currentSrt;
       
-      setStatus('Video ready. Preview and download below.', false);
+      setStatus('Video ready! Preview below.', false);
     } else {
       throw new Error('No video URL in result');
     }
 
   } catch (err) {
     console.error('Failed to get result:', err);
-    showError('Failed to retrieve final video from backend');
+    showError('Failed to retrieve final video');
     setStatus('Fetch failed.', false);
   }
-}
-
-async function composeVideoFromPlan(plan) {
-  if (currentVideoUrl) {
-    URL.revokeObjectURL(currentVideoUrl);
-  }
-
-  const canvas = document.createElement('canvas');
-  const isDark = elements.root.classList.contains('strang-dark');
-  const { blob, url, srt } = await renderExplainerVideo(canvas, plan, {
-    theme: isDark ? 'dark' : 'light'
-  });
-
-  currentVideoBlob = blob;
-  currentVideoUrl = url;
-  currentSrt = srt;
-
-  elements.previewVideo.src = url;
-  elements.previewVideo.load();
-
-  elements.downloadVideoBtn.disabled = false;
-  elements.downloadSrtBtn.disabled = !srt;
 }
 
 function setStatus(text, loading) {
@@ -363,20 +337,20 @@ function toggleDarkMode(enabled) {
 async function persistUiState() {
   const state = {
     darkMode: elements.darkModeToggle.checked,
-    style: elements.styleSelect.value,
-    duration: parseInt(elements.durationSelect.value || '60', 10),
-    voiceAccent: elements.accentSelect.value
+    style: elements.styleSelect.value
   };
   await chrome.storage.local.set({ [STORAGE_KEYS.UI_STATE]: state });
 }
 
-function handleProgress(step, status, message) {
-  if (status === 'starting') {
-    setStatus(message || `Starting ${step}...`, true);
-  } else if (status === 'done') {
-    setStatus(message || `${step} complete.`, false);
-  } else if (status === 'error') {
-    showError(message || `Error during ${step}.`);
+function handleProgress(step, status, message, progress_percent) {
+  if (status === 'starting' || status === 'scripting' || status === 'rendering' || status === 'processing') {
+    const pct = progress_percent !== undefined ? ` (${progress_percent}%)` : '';
+    setStatus(`${message}${pct}`, true);
+  } else if (status === 'completed' || status === 'done') {
+    // Don't just set status, the progressListener should handle fetching the video
+    setStatus(message || 'Video ready!', false);
+  } else if (status === 'error' || status === 'failed') {
+    showError(message || 'An error occurred.');
     setStatus('An error occurred.', false);
   }
 }
@@ -389,4 +363,3 @@ function triggerDownload(url, filename) {
   a.click();
   a.remove();
 }
-
