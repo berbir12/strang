@@ -13,29 +13,39 @@ const elements = {
   charCount: document.getElementById('charCount'),
   refreshSelectionBtn: document.getElementById('refreshSelectionBtn'),
   styleSelect: document.getElementById('styleSelect'),
+  avatarSelect: document.getElementById('avatarSelect'),
+  voiceSelect: document.getElementById('voiceSelect'),
   darkModeToggle: document.getElementById('darkModeToggle'),
   generateBtn: document.getElementById('generateBtn'),
+  cancelBtn: document.getElementById('cancelBtn'),
   loader: document.getElementById('loader'),
   statusText: document.getElementById('statusText'),
   errorText: document.getElementById('errorText'),
   previewVideo: document.getElementById('previewVideo'),
   downloadVideoBtn: document.getElementById('downloadVideoBtn'),
+  durationEstimate: document.getElementById('durationEstimate'),
 };
 
 let currentVideoUrl = null;
+let currentJobId = null;
+let avatarsList = [];
+let voicesList = [];
 
 const STORAGE_KEYS = {
   UI_STATE: 'uiState',
-  SELECTED_TEXT: 'selectedText'
+  SELECTED_TEXT: 'selectedText',
+  AVATAR_ID: 'avatarId',
+  VOICE_ID: 'voiceId'
 };
 
 init();
 
-function init() {
+async function init() {
   attachEventListeners();
-  restoreUiState().then(() => {
-    loadSelectedText();
-  });
+  await restoreUiState();
+  await loadAvatarsAndVoices();
+  loadSelectedText();
+  updateDurationEstimate();
 
   // Listen for progress updates from background script
   chrome.runtime.onMessage.addListener((message) => {
@@ -47,6 +57,7 @@ function init() {
       if (payload?.text && !elements.inputText.value) {
         elements.inputText.value = payload.text;
         updateCharCount();
+        updateDurationEstimate();
       }
     }
   });
@@ -55,8 +66,14 @@ function init() {
 function attachEventListeners() {
   elements.inputText.addEventListener('input', () => {
     updateCharCount();
+    updateDurationEstimate();
     clearError();
   });
+  
+  elements.avatarSelect.addEventListener('change', persistUiState);
+  elements.voiceSelect.addEventListener('change', persistUiState);
+  
+  elements.cancelBtn.addEventListener('click', handleCancel);
 
   elements.refreshSelectionBtn.addEventListener('click', async () => {
     clearError();
@@ -89,7 +106,11 @@ function attachEventListeners() {
 }
 
 async function restoreUiState() {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.UI_STATE);
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.UI_STATE,
+    STORAGE_KEYS.AVATAR_ID,
+    STORAGE_KEYS.VOICE_ID
+  ]);
   const state = stored[STORAGE_KEYS.UI_STATE] || {};
 
   if (typeof state.darkMode === 'boolean') {
@@ -98,6 +119,115 @@ async function restoreUiState() {
   }
   if (state.style) {
     elements.styleSelect.value = state.style;
+  }
+  if (stored[STORAGE_KEYS.AVATAR_ID]) {
+    // Will be set after avatars load
+  }
+  if (stored[STORAGE_KEYS.VOICE_ID]) {
+    // Will be set after voices load
+  }
+}
+
+async function loadAvatarsAndVoices() {
+  try {
+    // Load avatars
+    const avatarsResponse = await chrome.runtime.sendMessage({ type: 'GET_AVATARS' });
+    if (avatarsResponse?.success && avatarsResponse.avatars) {
+      avatarsList = avatarsResponse.avatars;
+      populateAvatarSelect(avatarsResponse.avatars);
+    }
+    
+    // Load voices
+    const voicesResponse = await chrome.runtime.sendMessage({ type: 'GET_VOICES' });
+    if (voicesResponse?.success && voicesResponse.voices) {
+      voicesList = voicesResponse.voices;
+      populateVoiceSelect(voicesResponse.voices);
+    }
+  } catch (err) {
+    console.error('Failed to load avatars/voices:', err);
+    // Continue without them - system will auto-select
+  }
+}
+
+function populateAvatarSelect(avatars) {
+  const select = elements.avatarSelect;
+  // Keep the "Auto-select" option
+  const autoOption = select.options[0];
+  select.innerHTML = '';
+  select.appendChild(autoOption);
+  
+  avatars.forEach(avatar => {
+    const option = document.createElement('option');
+    option.value = avatar.avatar_id;
+    option.textContent = avatar.name || avatar.avatar_id;
+    select.appendChild(option);
+  });
+  
+  // Restore saved preference
+  chrome.storage.local.get(STORAGE_KEYS.AVATAR_ID).then(stored => {
+    if (stored[STORAGE_KEYS.AVATAR_ID]) {
+      select.value = stored[STORAGE_KEYS.AVATAR_ID];
+    }
+  });
+}
+
+function populateVoiceSelect(voices) {
+  const select = elements.voiceSelect;
+  // Keep the "Use default" option
+  const defaultOption = select.options[0];
+  select.innerHTML = '';
+  select.appendChild(defaultOption);
+  
+  // Show first 20 voices to avoid overwhelming UI
+  voices.slice(0, 20).forEach(voice => {
+    const option = document.createElement('option');
+    option.value = voice.voice_id;
+    const label = voice.name || voice.voice_id;
+    const lang = voice.language ? ` (${voice.language})` : '';
+    option.textContent = `${label}${lang}`;
+    select.appendChild(option);
+  });
+  
+  // Restore saved preference
+  chrome.storage.local.get(STORAGE_KEYS.VOICE_ID).then(stored => {
+    if (stored[STORAGE_KEYS.VOICE_ID]) {
+      select.value = stored[STORAGE_KEYS.VOICE_ID];
+    }
+  });
+}
+
+function updateDurationEstimate() {
+  const text = elements.inputText.value.trim();
+  if (!text) {
+    elements.durationEstimate.classList.add('hidden');
+    return;
+  }
+  
+  // Rough estimate: ~150 words per minute, ~2.5 words per second
+  const wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
+  const estimatedSeconds = Math.ceil((wordCount / 150) * 60);
+  const minutes = Math.floor(estimatedSeconds / 60);
+  const seconds = estimatedSeconds % 60;
+  
+  let estimateText = 'Estimated duration: ';
+  if (minutes > 0) {
+    estimateText += `${minutes}m ${seconds}s`;
+  } else {
+    estimateText += `${seconds}s`;
+  }
+  
+  elements.durationEstimate.textContent = estimateText;
+  elements.durationEstimate.classList.remove('hidden');
+}
+
+function handleCancel() {
+  if (currentJobId) {
+    setStatus('Cancelling...', true);
+    // Note: We can't actually cancel HeyGen jobs, but we can stop polling
+    currentJobId = null;
+    elements.generateBtn.disabled = false;
+    elements.cancelBtn.classList.add('hidden');
+    setStatus('Cancelled.', false);
   }
 }
 
@@ -148,16 +278,23 @@ async function handleGenerateClick() {
   }
 
   const style = elements.styleSelect.value || 'professional';
+  const avatarId = elements.avatarSelect.value || null;
+  const voiceId = elements.voiceSelect.value || null;
 
   elements.generateBtn.disabled = true;
+  elements.cancelBtn.classList.remove('hidden');
   setStatus('Sending to Groq AI...', true);
+
+  let completed = false;
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'GENERATE_VIDEO_REQUEST',
       payload: {
         text: rawText,
-        style
+        style,
+        avatar_id: avatarId,
+        voice_id: voiceId
       }
     });
 
@@ -169,8 +306,9 @@ async function handleGenerateClick() {
     }
 
     if (response.jobId) {
+      currentJobId = response.jobId;
       // Backend mode - wait for WebSocket/polling updates
-      await handleBackendGeneration(response.jobId, response.websocket_available);
+      completed = await handleBackendGeneration(response.jobId, response.websocket_available);
     } else {
       throw new Error('Invalid response from backend');
     }
@@ -181,6 +319,9 @@ async function handleGenerateClick() {
     setStatus('Generation failed.', false);
   } finally {
     elements.generateBtn.disabled = false;
+    if (completed || !currentJobId) {
+      elements.cancelBtn.classList.add('hidden');
+    }
   }
 }
 
@@ -203,9 +344,13 @@ async function handleBackendGeneration(jobId, websocketAvailable) {
       
       if (status === 'completed') {
         completed = true;
+        currentJobId = null;
+        elements.cancelBtn.classList.add('hidden');
         // Immediately fetch the final result
         await fetchFinalResult(jobId);
       } else if (status === 'error' || status === 'failed') {
+        currentJobId = null;
+        elements.cancelBtn.classList.add('hidden');
         showError(msg || 'Video generation failed');
         setStatus('Generation failed.', false);
         completed = true;
@@ -267,6 +412,8 @@ async function handleBackendGeneration(jobId, websocketAvailable) {
   if (pollIntervalId) {
     clearInterval(pollIntervalId);
   }
+  
+  return completed;
 }
 
 async function fetchFinalResult(jobId) {
@@ -339,7 +486,11 @@ async function persistUiState() {
     darkMode: elements.darkModeToggle.checked,
     style: elements.styleSelect.value
   };
-  await chrome.storage.local.set({ [STORAGE_KEYS.UI_STATE]: state });
+  await chrome.storage.local.set({ 
+    [STORAGE_KEYS.UI_STATE]: state,
+    [STORAGE_KEYS.AVATAR_ID]: elements.avatarSelect.value || null,
+    [STORAGE_KEYS.VOICE_ID]: elements.voiceSelect.value || null
+  });
 }
 
 function handleProgress(step, status, message, progress_percent) {

@@ -45,17 +45,39 @@
             <option value="friendly">Friendly</option>
           </select>
         </div>
+        
+        <div class="strang-field">
+          <label for="avatarSelect" class="strang-label">Avatar (optional)</label>
+          <select id="avatarSelect" class="strang-select">
+            <option value="">Auto-select (recommended)</option>
+          </select>
+          <small class="strang-hint">Leave empty to use first available avatar</small>
+        </div>
+        
+        <div class="strang-field">
+          <label for="voiceSelect" class="strang-label">Voice (optional)</label>
+          <select id="voiceSelect" class="strang-select">
+            <option value="">Use default</option>
+          </select>
+          <small class="strang-hint">Leave empty to use default voice</small>
+        </div>
       </section>
       
 
       <section class="strang-section strang-actions">
-        <button id="generateBtn" class="strang-button-primary" type="button">
-          🎬 Generate Avatar Video
-        </button>
+        <div class="strang-button-group">
+          <button id="generateBtn" class="strang-button-primary" type="button">
+            🎬 Generate Avatar Video
+          </button>
+          <button id="cancelBtn" class="strang-button-secondary hidden" type="button">
+            ❌ Cancel
+          </button>
+        </div>
         <div id="statusRow" class="strang-status-row">
           <div id="loader" class="strang-loader hidden"></div>
           <span id="statusText" class="strang-status-text">Waiting for input...</span>
         </div>
+        <div id="durationEstimate" class="strang-duration-estimate hidden"></div>
       </section>
 
       <section class="strang-section">

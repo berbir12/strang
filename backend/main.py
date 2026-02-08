@@ -7,7 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import asyncio
+import logging
+from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 from config import settings
 from models import (
@@ -26,6 +29,22 @@ from models import (
 from utils.job_manager import job_manager
 from services.groq_service import GroqService
 from services.heygen_service import HeyGenService, HeyGenVideoStatus
+
+# Configure logging
+log_dir = Path(settings.TEMP_DIR) / "logs"
+log_dir.mkdir(parents=True, exist_ok=True)
+log_file = log_dir / f"strang_{datetime.now().strftime('%Y%m%d')}.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -90,20 +109,114 @@ async def process_video_generation(
         )
         
         groq = get_groq_service()
+        # Use shorter duration hint in cost-saving mode to generate shorter scripts
+        duration_hint = None
+        if settings.HEYGEN_ULTRA_LOW_COST or settings.HEYGEN_COST_SAVING_MODE:
+            duration_hint = settings.HEYGEN_MAX_VIDEO_DURATION
+            if settings.HEYGEN_ULTRA_LOW_COST:
+                # Ultra-low cost: target even shorter (90s)
+                duration_hint = min(duration_hint, 90)
+        
         script = await asyncio.to_thread(
             groq.generate_script,
             text=request.text,
-            style=request.style.value
+            style=request.style.value,
+            duration_hint=duration_hint
         )
         
         print(f"✓ Script generated: {len(script)} characters", flush=True)
+        
+        # Generate image prompts for visual elements (diagrams, illustrations)
+        job_manager.update_progress(
+            job_id,
+            JobStatus.SCRIPTING,
+            20,
+            "scripting",
+            "Generating visual element prompts..."
+        )
+        
+        image_prompts = await asyncio.to_thread(
+            groq.generate_image_prompts,
+            text=request.text
+        )
+        
+        if image_prompts:
+            print(f"✓ Generated {len(image_prompts)} image prompts for visual elements", flush=True)
+            logger.info(f"Image prompts generated: {image_prompts}")
+        
+        # Parse scenes from the script if [SCENE] markers are present
+        parsed_scenes = groq.parse_scenes(script)
+        if not parsed_scenes:
+            parsed_scenes = [{
+                "spoken_text": script,
+                "visual_prompt": image_prompts[0] if image_prompts else ""
+            }]
+        else:
+            # Fill missing visual prompts from generated image prompts
+            prompt_index = 0
+            for scene in parsed_scenes:
+                if not scene.get("visual_prompt") and image_prompts:
+                    scene["visual_prompt"] = image_prompts[min(prompt_index, len(image_prompts) - 1)]
+                    prompt_index += 1
+        
+        # Estimate video duration based on spoken text only
+        spoken_script = " ".join(scene["spoken_text"] for scene in parsed_scenes if scene.get("spoken_text"))
+        
+        # Estimate video duration and check limits
+        heygen = get_heygen_service()
+        estimated_duration = heygen._estimate_video_duration(spoken_script)
+        max_duration = settings.HEYGEN_MAX_VIDEO_DURATION
+        
+        # Ultra-low cost mode: enforce even stricter limits
+        if settings.HEYGEN_ULTRA_LOW_COST:
+            max_duration = min(max_duration, 90)  # Hard cap at 90s
+        
+        # Auto-truncate if enabled and script exceeds limit
+        was_truncated = False
+        if estimated_duration > max_duration and settings.HEYGEN_AUTO_TRUNCATE:
+            original_duration = estimated_duration
+            spoken_script, was_truncated = heygen._truncate_script_to_duration(spoken_script, max_duration)
+            if was_truncated:
+                estimated_duration = heygen._estimate_video_duration(spoken_script)
+                truncation_msg = (
+                    f"Script truncated from {original_duration:.1f}s to {estimated_duration:.1f}s "
+                    f"to fit HeyGen {max_duration}s limit."
+                )
+                print(f"⚠️ {truncation_msg}", flush=True)
+                logger.warning(truncation_msg)
+                job_manager.update_progress(
+                    job_id,
+                    JobStatus.SCRIPTING,
+                    25,
+                    "scripting",
+                    f"Truncating script to fit {max_duration}s limit..."
+                )
+                # Collapse to a single scene after truncation
+                parsed_scenes = [{
+                    "spoken_text": spoken_script,
+                    "visual_prompt": parsed_scenes[0].get("visual_prompt", "")
+                }]
+        elif estimated_duration > max_duration:
+            warning_msg = (
+                f"Warning: Script estimated duration ({estimated_duration:.1f}s) exceeds "
+                f"HeyGen limit ({max_duration}s). Video may fail. Consider shortening your input."
+            )
+            print(f"⚠️ {warning_msg}", flush=True)
+            logger.warning(warning_msg)
+        
+        # Show cost-saving info
+        cost_info = ""
+        if settings.HEYGEN_ULTRA_LOW_COST:
+            cost_info = " (Ultra-low cost mode: 90s max, 480p)"
+        elif settings.HEYGEN_COST_SAVING_MODE:
+            cost_info = " (Cost-saving mode)"
         
         job_manager.update_progress(
             job_id,
             JobStatus.SCRIPTING,
             30,
             "scripting",
-            "Script generation complete!"
+            f"Script generation complete! (Est. {estimated_duration:.0f}s){cost_info}"
         )
         
         # ============================================
@@ -118,15 +231,15 @@ async def process_video_generation(
             "HeyGen is rendering your avatar video..."
         )
         
-        heygen = get_heygen_service()
         print(f"[{job_id[:8]}] Submitting video to HeyGen...", flush=True)
         
-        # Submit video generation request
+        # Submit video generation request with visual elements
         video_id = await heygen.generate_avatar_video(
-            script=script,
+            script=spoken_script,
             avatar_id=request.avatar_id,
             voice_id=request.voice_id,
-            video_title=f"Strang_{job_id}"
+            video_title=f"Strang_{job_id}",
+            scenes=parsed_scenes
         )
         
         # Progress callback for HeyGen polling
@@ -171,7 +284,19 @@ async def process_video_generation(
         }
         
     except Exception as e:
-        print(f"❌ Video generation failed: {e}")
+        error_type = type(e).__name__
+        error_msg = f"Video generation failed: {error_type} - {str(e)}"
+        print(f"❌ {error_msg}")
+        logger.error(f"Job {job_id} failed: {error_type} - {e}", exc_info=True)
+        
+        # Update job status to failed
+        job_manager.update_progress(
+            job_id,
+            JobStatus.FAILED,
+            0,
+            "failed",
+            f"Video generation failed: {str(e)}"
+        )
         raise
 
 
@@ -260,7 +385,21 @@ async def generate_script(request: ScriptOnlyRequest):
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Script generation failed: {e}")
+        error_type = type(e).__name__
+        error_msg = str(e)
+        
+        # Provide user-friendly error messages
+        if "GROQ_API_KEY" in error_msg or "not configured" in error_msg:
+            detail = "Groq API key not configured. Please add GROQ_API_KEY to your .env file."
+        elif "rate limit" in error_msg.lower():
+            detail = "Groq API rate limit exceeded. Please wait a moment and try again."
+        elif "authentication" in error_msg.lower() or "api key" in error_msg.lower():
+            detail = "Groq API authentication failed. Please check your GROQ_API_KEY."
+        else:
+            detail = f"Script generation failed: {error_msg}"
+        
+        logger.error(f"Script generation error: {error_type} - {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @app.get("/job/{job_id}/progress", response_model=JobProgress)

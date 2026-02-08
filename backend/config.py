@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     MAX_VIDEO_AGE_HOURS: int = 24  # Auto-cleanup old videos
     
     # Video generation
-    MAX_TEXT_LENGTH: int = 3000
-    DEFAULT_VIDEO_WIDTH: int = 1280  # 720p - works with free/basic plans
-    DEFAULT_VIDEO_HEIGHT: int = 720   # Lower res for free tier compatibility
+    MAX_TEXT_LENGTH: int = 1500  # Ultra-low cost: reduced to generate very short, cheap videos
+    DEFAULT_VIDEO_WIDTH: int = 854  # 480p - lower resolution saves credits
+    DEFAULT_VIDEO_HEIGHT: int = 480  # Lower resolution = lower cost
     
     # Redis (for job queue)
     REDIS_HOST: str = "localhost"
@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     
     # Groq API settings (FREE and FAST!)
     GROQ_MODEL: str = "llama-3.3-70b-versatile"  # Free, fast, high-quality
-    GROQ_MAX_TOKENS: int = 1024
-    GROQ_TEMPERATURE: float = 0.7
+    GROQ_MAX_TOKENS: int = 2048  # Increased for longer, more creative scripts with visual descriptions
+    GROQ_TEMPERATURE: float = 0.85  # Higher temperature for more creative scripts
     
     # HeyGen settings
     HEYGEN_API_URL: str = "https://api.heygen.com"
@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     HEYGEN_VOICE_ID: str = "1bd001e7e50f421d891986aad5158bc8"  # Default voice
     HEYGEN_POLL_INTERVAL: int = 5  # Seconds between status polls
     HEYGEN_MAX_WAIT_TIME: int = 3600  # Max wait time in seconds (1 hour - effectively no timeout)
+    HEYGEN_USE_MULTIPLE_SCENES: bool = False  # Enable multi-scene videos (uses more credits but more creative)
+    HEYGEN_MAX_VIDEO_DURATION: int = 90  # Ultra-low cost: 90s max (free plan allows up to 180s)
+    HEYGEN_AUTO_TRUNCATE: bool = True  # Automatically truncate scripts that exceed max duration
+    HEYGEN_COST_SAVING_MODE: bool = True  # Enable cost-saving optimizations (lower res, shorter videos)
+    HEYGEN_DYNAMIC_BROLL: bool = True  # Move avatar to corner on visual-heavy scenes
+    HEYGEN_ULTRA_LOW_COST: bool = True  # Ultra-low cost mode: 90s max, 480p, aggressive truncation
     
     # WebSocket settings
     WEBSOCKET_ENABLED: bool = True

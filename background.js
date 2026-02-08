@@ -79,6 +79,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'GET_JOB_RESULT':
           await handleGetJobResult(message.payload, sendResponse);
           break;
+        case 'GET_AVATARS':
+          await handleGetAvatars(sendResponse);
+          break;
+        case 'GET_VOICES':
+          await handleGetVoices(sendResponse);
+          break;
         default:
           break;
       }
@@ -200,7 +206,7 @@ async function handleRequestActiveSelection(sendResponse) {
 }
 
 async function handleGenerateVideoRequest(payload, sendResponse) {
-  const { text, style } = payload || {};
+  const { text, style, avatar_id, voice_id } = payload || {};
   const cleanedText = sanitizeText(text || '');
 
   if (!cleanedText) {
@@ -230,14 +236,25 @@ async function handleGenerateVideoRequest(payload, sendResponse) {
   });
 
   try {
+    // Build request body
+    const requestBody = {
+      text: cleanedText,
+      style: safeStyle
+    };
+    
+    // Add optional avatar and voice if provided
+    if (avatar_id) {
+      requestBody.avatar_id = avatar_id;
+    }
+    if (voice_id) {
+      requestBody.voice_id = voice_id;
+    }
+    
     // Call new /api/process-video endpoint
     const response = await fetch(`${BACKEND_URL}/api/process-video`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: cleanedText,
-        style: safeStyle
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
@@ -457,6 +474,48 @@ function sanitizeText(text) {
     .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+async function handleGetAvatars(sendResponse) {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/avatars`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    sendResponse({ success: true, avatars: data.avatars || [] });
+  } catch (err) {
+    console.error('Get avatars error', err);
+    sendResponse({
+      success: false,
+      errorCode: 'AVATARS_ERROR',
+      message: `Failed to get avatars: ${err.message}`,
+      avatars: []
+    });
+  }
+}
+
+async function handleGetVoices(sendResponse) {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/voices`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    sendResponse({ success: true, voices: data.voices || [] });
+  } catch (err) {
+    console.error('Get voices error', err);
+    sendResponse({
+      success: false,
+      errorCode: 'VOICES_ERROR',
+      message: `Failed to get voices: ${err.message}`,
+      voices: []
+    });
+  }
 }
 
 function broadcastProgress({ step, status, message, progress_percent }) {

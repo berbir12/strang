@@ -254,6 +254,34 @@
   gap: 6px;
 }
 
+.strang-button-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.strang-hint {
+  display: block;
+  font-size: 10px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.strang-dark .strang-hint {
+  color: #9ca3af;
+}
+
+.strang-duration-estimate {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.strang-dark .strang-duration-estimate {
+  color: #9ca3af;
+}
+
 .strang-error-text {
   font-size: 11px;
   color: #b91c1c;
