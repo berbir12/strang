@@ -13,7 +13,7 @@ const elements = {
   charCount: document.getElementById('charCount'),
   refreshSelectionBtn: document.getElementById('refreshSelectionBtn'),
   styleSelect: document.getElementById('styleSelect'),
-  avatarSelect: document.getElementById('avatarSelect'),
+  // Avatar select removed
   voiceSelect: document.getElementById('voiceSelect'),
   darkModeToggle: document.getElementById('darkModeToggle'),
   generateBtn: document.getElementById('generateBtn'),
@@ -28,7 +28,6 @@ const elements = {
 
 let currentVideoUrl = null;
 let currentJobId = null;
-let avatarsList = [];
 let voicesList = [];
 
 const STORAGE_KEYS = {
@@ -69,10 +68,10 @@ function attachEventListeners() {
     updateDurationEstimate();
     clearError();
   });
-  
-  elements.avatarSelect.addEventListener('change', persistUiState);
-  elements.voiceSelect.addEventListener('change', persistUiState);
-  
+
+  if (elements.avatarSelect) elements.avatarSelect.addEventListener('change', persistUiState);
+  if (elements.voiceSelect) elements.voiceSelect.addEventListener('change', persistUiState);
+
   elements.cancelBtn.addEventListener('click', handleCancel);
 
   elements.refreshSelectionBtn.addEventListener('click', async () => {
@@ -136,7 +135,7 @@ async function loadAvatarsAndVoices() {
       avatarsList = avatarsResponse.avatars;
       populateAvatarSelect(avatarsResponse.avatars);
     }
-    
+
     // Load voices
     const voicesResponse = await chrome.runtime.sendMessage({ type: 'GET_VOICES' });
     if (voicesResponse?.success && voicesResponse.voices) {
@@ -151,18 +150,19 @@ async function loadAvatarsAndVoices() {
 
 function populateAvatarSelect(avatars) {
   const select = elements.avatarSelect;
+  if (!select) return;
   // Keep the "Auto-select" option
   const autoOption = select.options[0];
   select.innerHTML = '';
   select.appendChild(autoOption);
-  
+
   avatars.forEach(avatar => {
     const option = document.createElement('option');
     option.value = avatar.avatar_id;
     option.textContent = avatar.name || avatar.avatar_id;
     select.appendChild(option);
   });
-  
+
   // Restore saved preference
   chrome.storage.local.get(STORAGE_KEYS.AVATAR_ID).then(stored => {
     if (stored[STORAGE_KEYS.AVATAR_ID]) {
@@ -177,7 +177,7 @@ function populateVoiceSelect(voices) {
   const defaultOption = select.options[0];
   select.innerHTML = '';
   select.appendChild(defaultOption);
-  
+
   // Show first 20 voices to avoid overwhelming UI
   voices.slice(0, 20).forEach(voice => {
     const option = document.createElement('option');
@@ -187,7 +187,7 @@ function populateVoiceSelect(voices) {
     option.textContent = `${label}${lang}`;
     select.appendChild(option);
   });
-  
+
   // Restore saved preference
   chrome.storage.local.get(STORAGE_KEYS.VOICE_ID).then(stored => {
     if (stored[STORAGE_KEYS.VOICE_ID]) {
@@ -202,20 +202,20 @@ function updateDurationEstimate() {
     elements.durationEstimate.classList.add('hidden');
     return;
   }
-  
+
   // Rough estimate: ~150 words per minute, ~2.5 words per second
   const wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
   const estimatedSeconds = Math.ceil((wordCount / 150) * 60);
   const minutes = Math.floor(estimatedSeconds / 60);
   const seconds = estimatedSeconds % 60;
-  
+
   let estimateText = 'Estimated duration: ';
   if (minutes > 0) {
     estimateText += `${minutes}m ${seconds}s`;
   } else {
     estimateText += `${seconds}s`;
   }
-  
+
   elements.durationEstimate.textContent = estimateText;
   elements.durationEstimate.classList.remove('hidden');
 }
@@ -235,14 +235,14 @@ async function loadSelectedText() {
   // First try to get text from chrome.storage (set by content.js on mouseup)
   const stored = await chrome.storage.local.get(STORAGE_KEYS.SELECTED_TEXT);
   const selectedText = stored[STORAGE_KEYS.SELECTED_TEXT];
-  
+
   if (selectedText && selectedText.trim()) {
     elements.inputText.value = selectedText;
     updateCharCount();
     setStatus('Loaded selected text.', false);
     return;
   }
-  
+
   // Fallback: try to get last selection from background script
   const response = await chrome.runtime.sendMessage({ type: 'GET_LAST_SELECTION' });
   if (response?.success && response.lastSelection?.text) {
@@ -267,7 +267,7 @@ function updateCharCount() {
 async function handleGenerateClick() {
   clearError();
   const rawText = elements.inputText.value.trim();
-  
+
   if (!rawText) {
     showError('Please enter or select some text first.');
     return;
@@ -277,13 +277,12 @@ async function handleGenerateClick() {
     return;
   }
 
-  const style = elements.styleSelect.value || 'professional';
-  const avatarId = elements.avatarSelect.value || null;
+  const style = elements.styleSelect.value || 'documentary';
   const voiceId = elements.voiceSelect.value || null;
 
   elements.generateBtn.disabled = true;
   elements.cancelBtn.classList.remove('hidden');
-  setStatus('Sending to Groq AI...', true);
+  setStatus('Sending to Groq...', true);
 
   let completed = false;
 
@@ -293,7 +292,6 @@ async function handleGenerateClick() {
       payload: {
         text: rawText,
         style,
-        avatar_id: avatarId,
         voice_id: voiceId
       }
     });
@@ -329,19 +327,19 @@ async function handleBackendGeneration(jobId, websocketAvailable) {
   let completed = false;
   let lastProgressAt = Date.now();
   let pollIntervalId = null;
-  
+
   // Listen for progress updates from background script
   const progressListener = async (message) => {
     if (message.type === 'VIDEO_PROGRESS' && message.payload) {
       const { status, progress_percent, message: msg } = message.payload;
       lastProgressAt = Date.now();
-      
+
       if (progress_percent !== undefined) {
         setStatus(`${msg} (${progress_percent}%)`, true);
       } else {
         setStatus(msg, true);
       }
-      
+
       if (status === 'completed') {
         completed = true;
         currentJobId = null;
@@ -357,7 +355,7 @@ async function handleBackendGeneration(jobId, websocketAvailable) {
       }
     }
   };
-  
+
   chrome.runtime.onMessage.addListener(progressListener);
 
   const startPolling = () => {
@@ -391,14 +389,14 @@ async function handleBackendGeneration(jobId, websocketAvailable) {
       }
     }, 5000);
   };
-  
+
   if (!websocketAvailable) {
     startPolling();
   }
-  
+
   // Wait for completion (no timeout - HeyGen can take 5-10 minutes)
   const startTime = Date.now();
-  
+
   while (!completed) {
     // If WebSocket stops sending updates, start polling
     if (websocketAvailable && Date.now() - lastProgressAt > 8000) {
@@ -406,19 +404,19 @@ async function handleBackendGeneration(jobId, websocketAvailable) {
     }
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
-  
+
   // Clean up listener
   chrome.runtime.onMessage.removeListener(progressListener);
   if (pollIntervalId) {
     clearInterval(pollIntervalId);
   }
-  
+
   return completed;
 }
 
 async function fetchFinalResult(jobId) {
   setStatus('Fetching final video...', true);
-  
+
   try {
     const resultResponse = await chrome.runtime.sendMessage({
       type: 'GET_JOB_RESULT',
@@ -434,12 +432,12 @@ async function fetchFinalResult(jobId) {
     // Set video preview
     if (result.video_url) {
       currentVideoUrl = result.video_url;
-      
+
       elements.previewVideo.src = result.video_url;
       elements.previewVideo.load();
-      
+
       elements.downloadVideoBtn.disabled = false;
-      
+
       setStatus('Video ready! Preview below.', false);
     } else {
       throw new Error('No video URL in result');
@@ -486,10 +484,10 @@ async function persistUiState() {
     darkMode: elements.darkModeToggle.checked,
     style: elements.styleSelect.value
   };
-  await chrome.storage.local.set({ 
+  await chrome.storage.local.set({
     [STORAGE_KEYS.UI_STATE]: state,
-    [STORAGE_KEYS.AVATAR_ID]: elements.avatarSelect.value || null,
-    [STORAGE_KEYS.VOICE_ID]: elements.voiceSelect.value || null
+    [STORAGE_KEYS.AVATAR_ID]: (elements.avatarSelect && elements.avatarSelect.value) || null,
+    [STORAGE_KEYS.VOICE_ID]: (elements.voiceSelect && elements.voiceSelect.value) || null
   });
 }
 

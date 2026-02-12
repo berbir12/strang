@@ -47,7 +47,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     timestamp: Date.now()
   };
 
-  chrome.storage.local.set({ 
+  chrome.storage.local.set({
     [STORAGE_KEYS.LAST_SELECTION]: selectionPayload,
     selectedText: safeText
   });
@@ -56,7 +56,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   chrome.runtime.sendMessage({
     type: 'SELECTION_UPDATED',
     payload: selectionPayload
-  }).catch(() => {});
+  }).catch(() => { });
 });
 
 // Main message router
@@ -146,8 +146,8 @@ async function handleRequestActiveSelection(sendResponse) {
       url: tab.url || '',
       timestamp: Date.now()
     };
-    
-    await chrome.storage.local.set({ 
+
+    await chrome.storage.local.set({
       [STORAGE_KEYS.LAST_SELECTION]: selectionPayload,
       selectedText: text
     });
@@ -184,7 +184,7 @@ async function handleRequestActiveSelection(sendResponse) {
           timestamp: Date.now()
         };
 
-        await chrome.storage.local.set({ 
+        await chrome.storage.local.set({
           [STORAGE_KEYS.LAST_SELECTION]: selectionPayload,
           selectedText: text
         });
@@ -241,7 +241,7 @@ async function handleGenerateVideoRequest(payload, sendResponse) {
       text: cleanedText,
       style: safeStyle
     };
-    
+
     // Add optional avatar and voice if provided
     if (avatar_id) {
       requestBody.avatar_id = avatar_id;
@@ -249,7 +249,7 @@ async function handleGenerateVideoRequest(payload, sendResponse) {
     if (voice_id) {
       requestBody.voice_id = voice_id;
     }
-    
+
     // Call new /api/process-video endpoint
     const response = await fetch(`${BACKEND_URL}/api/process-video`, {
       method: 'POST',
@@ -278,7 +278,7 @@ async function handleGenerateVideoRequest(payload, sendResponse) {
       status: 'submitted',
       message: 'Job submitted. Groq is scripting...'
     });
-    
+
     // Connect WebSocket for real-time updates
     const ws = connectWebSocket(jobId);
 
@@ -311,25 +311,25 @@ function connectWebSocket(jobId) {
     console.log('[WebSocket] Disabled');
     return null;
   }
-  
+
   // Clean up existing connection
   if (activeWebSockets.has(jobId)) {
     activeWebSockets.get(jobId).close();
     activeWebSockets.delete(jobId);
   }
-  
+
   try {
     const ws = new WebSocket(`${BACKEND_WS_URL}/ws/job/${jobId}`);
-    
+
     ws.onopen = () => {
       console.log(`[WebSocket] Connected to job ${jobId}`);
     };
-    
+
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         console.log(`[WebSocket] Message:`, data);
-        
+
         if (data.type === 'progress' || data.type === 'connected') {
           broadcastProgress({
             step: data.current_step,
@@ -360,19 +360,19 @@ function connectWebSocket(jobId) {
         console.error('[WebSocket] Parse error:', err);
       }
     };
-    
+
     ws.onerror = (error) => {
       console.error('[WebSocket] Error:', error);
       activeWebSockets.delete(jobId);
     };
-    
+
     ws.onclose = (event) => {
       console.log(`[WebSocket] Closed: ${event.code}`);
       activeWebSockets.delete(jobId);
     };
-    
+
     activeWebSockets.set(jobId, ws);
-    
+
     // Ping to keep alive
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -381,9 +381,9 @@ function connectWebSocket(jobId) {
         clearInterval(pingInterval);
       }
     }, 20000);
-    
+
     return ws;
-    
+
   } catch (err) {
     console.error('[WebSocket] Failed:', err);
     return null;
@@ -403,7 +403,7 @@ async function handlePollJobProgress(payload, sendResponse) {
 
   try {
     const response = await fetch(`${BACKEND_URL}/job/${jobId}/progress`);
-    
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -441,7 +441,7 @@ async function handleGetJobResult(payload, sendResponse) {
 
   try {
     const response = await fetch(`${BACKEND_URL}/job/${jobId}/result`);
-    
+
     if (response.status === 202) {
       sendResponse({
         success: false,
@@ -479,7 +479,7 @@ function sanitizeText(text) {
 async function handleGetAvatars(sendResponse) {
   try {
     const response = await fetch(`${BACKEND_URL}/api/avatars`);
-    
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -500,7 +500,7 @@ async function handleGetAvatars(sendResponse) {
 async function handleGetVoices(sendResponse) {
   try {
     const response = await fetch(`${BACKEND_URL}/api/voices`);
-    
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -522,5 +522,5 @@ function broadcastProgress({ step, status, message, progress_percent }) {
   chrome.runtime.sendMessage({
     type: 'VIDEO_PROGRESS',
     payload: { step, status, message, progress_percent }
-  }).catch(() => {});
+  }).catch(() => { });
 }

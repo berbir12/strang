@@ -1,104 +1,95 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Strang Avatar Video</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body class="strang-root strang-light">
-    <div id="app" class="strang-container">
-      <header class="strang-header">
-        <div class="strang-title-block">
-          <h1 class="strang-title">Strang</h1>
-          <p class="strang-subtitle">Turn text into AI avatar videos with Groq + HeyGen</p>
-        </div>
-        <label class="strang-toggle">
-          <span>Dark</span>
-          <input type="checkbox" id="darkModeToggle" />
-          <span class="strang-toggle-slider"></span>
-        </label>
-      </header>
 
-      <section class="strang-section">
-        <label for="inputText" class="strang-label">Your content</label>
-        <textarea
-          id="inputText"
-          class="strang-textarea"
-          rows="6"
-          placeholder="Select text on a page, or paste your content here..."
-        ></textarea>
-        <div class="strang-text-meta">
-          <span id="charCount" class="strang-char-count">0 / 3000</span>
-          <button id="refreshSelectionBtn" class="strang-link-button" type="button">
-            ↻ Get page selection
-          </button>
-        </div>
-      </section>
+<head>
+  <meta charset="UTF-8" />
+  <title>Strang Avatar Video</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
 
-      <section class="strang-section">
-        <div class="strang-field">
-          <label for="styleSelect" class="strang-label">Script style</label>
-          <select id="styleSelect" class="strang-select">
-            <option value="professional" selected>Professional</option>
-            <option value="casual">Casual</option>
-            <option value="educational">Educational</option>
-            <option value="friendly">Friendly</option>
-          </select>
-        </div>
-        
-        <div class="strang-field">
-          <label for="avatarSelect" class="strang-label">Avatar (optional)</label>
-          <select id="avatarSelect" class="strang-select">
-            <option value="">Auto-select (recommended)</option>
-          </select>
-          <small class="strang-hint">Leave empty to use first available avatar</small>
-        </div>
-        
-        <div class="strang-field">
-          <label for="voiceSelect" class="strang-label">Voice (optional)</label>
-          <select id="voiceSelect" class="strang-select">
-            <option value="">Use default</option>
-          </select>
-          <small class="strang-hint">Leave empty to use default voice</small>
-        </div>
-      </section>
-      
+<body class="strang-root strang-light">
+  <div id="app" class="strang-container">
+    <header class="strang-header">
+      <div class="strang-title-block">
+        <h1 class="strang-title">Strang Cinematic</h1>
+        <p class="strang-subtitle">AI Video Generator (Sora + Groq)</p>
+      </div>
+      <label class="strang-toggle">
+        <span>Dark</span>
+        <input type="checkbox" id="darkModeToggle" />
+        <span class="strang-toggle-slider"></span>
+      </label>
+    </header>
 
-      <section class="strang-section strang-actions">
-        <div class="strang-button-group">
-          <button id="generateBtn" class="strang-button-primary" type="button">
-            🎬 Generate Avatar Video
-          </button>
-          <button id="cancelBtn" class="strang-button-secondary hidden" type="button">
-            ❌ Cancel
-          </button>
-        </div>
-        <div id="statusRow" class="strang-status-row">
-          <div id="loader" class="strang-loader hidden"></div>
-          <span id="statusText" class="strang-status-text">Waiting for input...</span>
-        </div>
-        <div id="durationEstimate" class="strang-duration-estimate hidden"></div>
-      </section>
+    <section class="strang-section">
+      <label for="inputText" class="strang-label">Video Topic / Script</label>
+      <textarea id="inputText" class="strang-textarea" rows="6"
+        placeholder="Describe the video you want to create (e.g. 'A futuristic documentary about AI cities')..."></textarea>
+      <div class="strang-text-meta">
+        <span id="charCount" class="strang-char-count">0 / 3000</span>
+        <button id="refreshSelectionBtn" class="strang-link-button" type="button">
+          ↻ Get page selection
+        </button>
+      </div>
+    </section>
 
-      <section class="strang-section">
-        <h2 class="strang-section-title">Preview & Download</h2>
-        <video id="previewVideo" class="strang-video" controls></video>
-        <div class="strang-export-row">
-          <button id="downloadVideoBtn" class="strang-button-secondary" type="button" disabled>
-            ⬇ Download Video (.mp4)
-          </button>
-        </div>
-      </section>
+    <section class="strang-section">
+      <div class="strang-field">
+        <label for="styleSelect" class="strang-label">Video Style</label>
+        <select id="styleSelect" class="strang-select">
+          <option value="documentary" selected>Documentary</option>
+          <option value="cinematic">Cinematic</option>
+          <option value="news">News Report</option>
+          <option value="storytelling">Storytelling</option>
+          <option value="educational">Educational</option>
+        </select>
+      </div>
 
-      <section class="strang-section">
-        <p id="errorText" class="strang-error-text hidden"></p>
-      </section>
+      <div class="strang-field">
+        <label for="voiceSelect" class="strang-label">Narrator Voice</label>
+        <select id="voiceSelect" class="strang-select">
+          <option value="">Auto-select (Guy Neural)</option>
+        </select>
+      </div>
+    </section>
 
-      <footer class="strang-footer">
-        <p>Powered by <strong>Groq</strong> + <strong>HeyGen</strong></p>
-      </footer>
-    </div>
 
-    <script src="popup.js"></script>
-  </body>
+    <section class="strang-section strang-actions">
+      <div class="strang-button-group">
+        <button id="generateBtn" class="strang-button-primary" type="button">
+          🎬 Generate Avatar Video
+        </button>
+        <button id="cancelBtn" class="strang-button-secondary hidden" type="button">
+          ❌ Cancel
+        </button>
+      </div>
+      <div id="statusRow" class="strang-status-row">
+        <div id="loader" class="strang-loader hidden"></div>
+        <span id="statusText" class="strang-status-text">Waiting for input...</span>
+      </div>
+      <div id="durationEstimate" class="strang-duration-estimate hidden"></div>
+    </section>
+
+    <section class="strang-section">
+      <h2 class="strang-section-title">Preview & Download</h2>
+      <video id="previewVideo" class="strang-video" controls></video>
+      <div class="strang-export-row">
+        <button id="downloadVideoBtn" class="strang-button-secondary" type="button" disabled>
+          ⬇ Download Video (.mp4)
+        </button>
+      </div>
+    </section>
+
+    <section class="strang-section">
+      <p id="errorText" class="strang-error-text hidden"></p>
+    </section>
+
+    <footer class="strang-footer">
+      <p>Powered by <strong>Groq</strong> + <strong>HeyGen</strong></p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
 </html>

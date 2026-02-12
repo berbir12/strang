@@ -1,6 +1,6 @@
 """
 Pydantic models for API requests and responses
-Groq (FREE) + HeyGen pipeline
+Groq (Script) + Sora (Video) + EdgeTTS (Audio)
 """
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -9,10 +9,11 @@ from enum import Enum
 
 class ScriptStyle(str, Enum):
     """Script style options"""
-    PROFESSIONAL = "professional"
-    CASUAL = "casual"
+    DOCUMENTARY = "documentary"
+    CINEMATIC = "cinematic"
+    NEWS = "news"
     EDUCATIONAL = "educational"
-    FRIENDLY = "friendly"
+    STORYTELLING = "storytelling"
 
 
 class JobStatus(str, Enum):
@@ -20,17 +21,16 @@ class JobStatus(str, Enum):
     QUEUED = "queued"
     PROCESSING = "processing"
     SCRIPTING = "scripting"          # Groq is generating script
-    RENDERING = "rendering"           # HeyGen is rendering video
+    RENDERING = "rendering"          # Sora/Composer is rendering
     COMPLETED = "completed"
     FAILED = "failed"
 
 
 class ProcessVideoRequest(BaseModel):
-    """Request to process text into avatar video"""
+    """Request to process text into video"""
     text: str = Field(..., min_length=10, max_length=3000)
-    style: ScriptStyle = ScriptStyle.PROFESSIONAL
-    avatar_id: Optional[str] = None    # HeyGen avatar ID
-    voice_id: Optional[str] = None     # HeyGen voice ID
+    style: ScriptStyle = ScriptStyle.DOCUMENTARY
+    voice_id: Optional[str] = None     # EdgeTTS voice ID
 
 
 class JobProgress(BaseModel):
@@ -65,7 +65,7 @@ class VideoResult(BaseModel):
 class ScriptOnlyRequest(BaseModel):
     """Request to generate script only (without video)"""
     text: str = Field(..., min_length=10, max_length=3000)
-    style: ScriptStyle = ScriptStyle.PROFESSIONAL
+    style: ScriptStyle = ScriptStyle.DOCUMENTARY
     duration_hint: Optional[int] = Field(None, ge=30, le=300)
 
 
@@ -78,26 +78,15 @@ class ScriptOnlyResponse(BaseModel):
     estimated_duration_seconds: int
 
 
-class AvatarInfo(BaseModel):
-    """HeyGen avatar information"""
-    avatar_id: str
-    name: str
-    preview_url: Optional[str] = None
-
-
 class VoiceInfo(BaseModel):
-    """HeyGen voice information"""
+    """TTS voice information"""
     voice_id: str
     name: str
     language: Optional[str] = None
     gender: Optional[str] = None
 
 
-class AvailableAvatarsResponse(BaseModel):
-    """Response with available avatars"""
-    avatars: List[AvatarInfo]
-
-
 class AvailableVoicesResponse(BaseModel):
     """Response with available voices"""
     voices: List[VoiceInfo]
+

@@ -1,21 +1,27 @@
-# Backend requirements for Strang v3.0
-# Groq (FREE) + HeyGen Avatar Video Generation
+# Backend requirements for Strang v4.0
+# Groq (FREE) + OpenAI Sora + EdgeTTS (FREE)
 
 # Web framework
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
-websockets==12.0  # WebSocket support for real-time progress
+websockets>=13.0.0,<15.1.0
+
+# httpx: must be <0.28 for OpenAI SDK (passes 'proxies' to Client)
+httpx>=0.24.0,<0.28.0
 
 # AI Services
-groq>=0.11.0       # Groq API for FREE and FAST script generation
-httpx>=0.28.1      # HTTP client for async requests (HeyGen API)
+groq>=0.11.0       # Script generation
+openai>=1.12.0     # Sora Video Generation
+edge-tts>=6.1.9    # Free High Quality TTS
+
+# Video Processing
+moviepy>=1.0.3     # Video Composition
+numpy<2.0.0        # Pinned for moviepy compatibility
 
 # Utilities
 pydantic>=2.10.0
 pydantic-settings>=2.6.0
-python-dotenv==1.0.0
+python-dotenv>=1.0.1
 aiofiles==23.2.1
 
-# Optional (for production)
-redis==5.0.1       # For job queue persistence
